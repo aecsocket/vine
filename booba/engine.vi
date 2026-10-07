@@ -12,6 +12,7 @@ pub struct* RigidBody(pub {
   velocity: Vec2,
   collider: Collider,
   inverse_mass: F32,
+  restitution: F32,
 });
 
 pub enum* Collider {
@@ -21,16 +22,20 @@ pub enum* Collider {
 
 pub mod Engine {
   pub fn .update(&engine: &Engine, dt: F32) {
-    resolve_contacts(&engine, dt);
     integrate_bodies(&engine, dt);
+    resolve_contacts(&engine);
   }
 }
 
-fn resolve_contacts(&engine: &Engine, dt: F32) {
+fn resolve_contacts(&engine: &Engine) {
   // TODO: replace with a real broadphase
-  for body_a in engine.bodies {
-    for body_b in engine.bodies {
-
+  for (i, body_a) in engine.bodies.iter_ref().enumerate() {
+    // this skips:
+    // - the pair where body_a = body_b
+    // - the reverse pair, like if we previous did (a, b)
+    //   then we won't do (b, a) cause that's pointless
+    for body_b in engine.bodies.iter_ref().skip(i + 1) {
+      resolve_contact(body_a, body_b);
     }
   }
 }
@@ -44,16 +49,69 @@ fn integrate_bodies(&engine: &Engine, dt: F32) {
   }
 }
 
+fn resolve_contact(&body_a: &RigidBody, &body_b: &RigidBody) {
+  let rel_position = body_b.position - body_a.position;
+  let contact = match find_contacts(
+    &body_a.collider,
+    &body_b.collider,
+    rel_position,
+  ) {
+    Some(contact) { contact }
+    None() { return; }
+  };
+  // we know they're colliding; let's apply impulses to solve it
+
+  let inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass;
+  if inverse_mass_sum <= 0.0 {
+    // two static bodies colliding?
+    return;
+  }
+
+  // how quickly is A approaching B, *along the collision normal*?
+  let relative_velocity = body_b.velocity - body_a.velocity;
+  let normal_velocity = relative_velocity.dot(contact.normal.get());
+
+  if normal_velocity < 0.0 {
+    // A and B are approaching, so we want to apply impulses to push them away.
+    // this part is physically correct, if simplistic.
+
+    // if normal_velocity > 0, they'd be separating, so do nothing.
+    let restitution = effective_restitution(body_a.restitution, body_b.restitution);
+
+    // compute what impulse (instantaneous change in acceleration)
+    // we want to appply to our bodies
+    let magnitude = -(1.0 + restitution) * normal_velocity / inverse_mass_sum;
+    let impulse = contact.normal.get() * magnitude;
+
+    // ..and actually apply it to the bodies
+    // F = ma => a = F/m => a = F*(1/m) => F * inverse_mass
+    body_a.velocity -= impulse * body_a.inverse_mass;
+    body_b.velocity += impulse * body_b.inverse_mass;
+  }
+
+  // separately from velocity, we want to push them apart *right now*
+  // so that they're no longer touching.
+  // this part is NOT physically correct, but useful for simulation stability.
+  let correction = contact.normal.get() * (0.8 * contact.depth / inverse_mass_sum);
+  body_a.position -= correction * body_a.inverse_mass;
+  body_b.position += correction * body_b.inverse_mass;
+}
+
 /// Find whether two colliders are overlapping, and if so, what the collision
 /// normal and depth is.
 ///
 /// This function runs in collider A's reference frame; we assume that A is at
 /// position (0, 0, 0) and has no rotation.
+///
+/// Returns:
+/// - `normal`: in what direction do you have to move body B to resolve this
+///   contact?
+/// - `depth`: how far is B penetrating into A (or vice versa)?
 fn find_contacts(
   &collider_a: &Collider,
   &collider_b: &Collider,
   position_b: Vec2,
-) -> Option[{ normal: Vec2, depth: F32 }] {
+) -> Option[{ normal: UnitVec2, depth: F32 }] {
   match (collider_a, collider_b) {
     (
       Collider::Circle({ radius: radius_a }),
@@ -65,11 +123,20 @@ fn find_contacts(
       }
 
       Some({
-        normal: position_b.try_normalize().or_use((1.0, 0.0)),
+        normal: position_b.try_normalize().or_use(UnitVec2::X),
         depth: radius_a + radius_b - distance
       })
     }
   }
+}
+
+/// Compute the restitution of two bodies' restitution values.
+//
+// Currently this is hardcoded to `max(a, b)`, so that we get the bounciest
+// results possible, but in a real physics engine you can use other functions
+// like the minimum or the average. Box2D uses `max(a, b)`.
+fn effective_restitution(a: F32, b: F32) -> F32 {
+  if a > b { a } else { b }
 }
 
 pub mod Vec2 {
@@ -77,14 +144,29 @@ pub mod Vec2 {
     (x * x + y * y).sqrt()
   }
 
-  pub fn .try_normalize((x, y): Vec2) -> Option[Vec2] {
+  pub fn .dot((ax, ay): Vec2, (bx, by): Vec2) -> F32 {
+    ax * bx + ay * by
+  }
+
+  pub fn .try_normalize((x, y): Vec2) -> Option[UnitVec2] {
     let len = (x, y).len();
     if len == 0.0 {
       None()
     } else {
-      Some((x / len, y / len))
+      Some(UnitVec2((x / len, y / len)))
     }
   }
 }
 
-use Vec2::{len as _, try_normalize as _};
+use Vec2::{len as _, dot as _, try_normalize as _};
+
+pub struct* UnitVec2(Vec2);
+
+pub mod UnitVec2 {
+  pub const X: UnitVec2 = UnitVec2((1.0, 0.0));
+  pub const Y: UnitVec2 = UnitVec2((0.0, 1.0));
+
+  pub fn .get(UnitVec2(vec): UnitVec2) -> Vec2 {
+    vec
+  }
+}
