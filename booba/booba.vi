@@ -1,0 +1,24 @@
+mod engine;
+
+use engine::{RigidBody, Engine};
+
+pub fn main(&io: &IO) {
+  io.println("hellurrr");
+
+  let engine = Engine({
+    rigid_bodies: [engine::RigidBody({
+      position: (0.0, 0.0),
+      velocity: (0.0, 0.0),
+    })],
+    gravity: (0.0, -9.81),
+  });
+
+  for _ in 0..10 {
+    engine.update(0.1);
+
+    io.println("all bodies in system:");
+    for body in engine.rigid_bodies {
+      io.println("- {body.position.show()}");
+    }
+  }
+}

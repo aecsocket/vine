@@ -1,0 +1,22 @@
+use #root::ops::elementwise;
+
+pub struct* Engine(pub {
+  rigid_bodies: List[RigidBody],
+  gravity: Vec2,
+});
+
+pub type Vec2 = (F32, F32);
+
+pub struct* RigidBody(pub {
+  position: Vec2,
+  velocity: Vec2,
+});
+
+pub mod Engine {
+  pub fn .update(&engine: &Engine, dt: F32) {
+    for &body in &engine.rigid_bodies {
+      body.velocity += engine.gravity * dt;
+      body.position += body.velocity * dt;
+    }
+  }
+}

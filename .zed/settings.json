@@ -1,0 +1,23 @@
+{
+  "file_types": {
+    "Vine": ["vi"]
+  },
+  "lsp": {
+    "vine": {
+      "binary": {
+        "path": "/var/home/boris/Projects/vine/target/debug/vine",
+        "arguments": [
+          "lsp",
+          "--no-root",
+          "vine/examples/*.vi",
+          "tests/programs/*.vi",
+          "tests/aoc_2024/*.vi",
+          "tests/compile/*.vi",
+          "tests/misc/*.vi",
+          "root/",
+          "booba/"
+        ]
+      }
+    }
+  },
+}

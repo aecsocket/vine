@@ -1,0 +1,18 @@
+id = "vine"
+name = "Vine"
+version = "0.1.0"
+schema_version = 1
+authors = ["Vine contributors"]
+description = "Vine language support using the Vine language server."
+repository = "https://github.com/VineLang/vine"
+languages = ["languages/vine"]
+icon_themes = ["icon_themes/vine.json"]
+
+[language_servers.vine]
+name = "Vine LSP"
+languages = ["Vine"]
+
+[grammars.vine]
+repository = "https://github.com/VineLang/vine"
+rev = "87b90a395b55bc966ebc5c18ccbf6bd28f3b19db"
+path = "lsp/tree-sitter-vine"

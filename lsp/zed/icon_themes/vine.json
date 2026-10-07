@@ -1,0 +1,17 @@
+{
+  "$schema": "https://zed.dev/schema/icon_themes/v0.3.0.json",
+  "name": "Zed + Vine",
+  "author": "Vine contributors",
+  "themes": [
+    {
+      "name": "Zed + Vine",
+      "appearance": "dark",
+      "file_suffixes": {
+        "vi": "vine"
+      },
+      "file_icons": {
+        "vine": { "path": "./icons/vine.svg" }
+      }
+    }
+  ]
+}
