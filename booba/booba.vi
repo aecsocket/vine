@@ -1,24 +1,46 @@
 mod engine;
 
-use engine::{RigidBody, Engine};
+use engine::{RigidBody, Engine, Collider};
 
 pub fn main(&io: &IO) {
-  io.println("hellurrr");
-
   let engine = Engine({
-    rigid_bodies: [engine::RigidBody({
-      position: (0.0, 0.0),
-      velocity: (0.0, 0.0),
-    })],
+    bodies: [
+      RigidBody({
+        position: (0.0, 0.0),
+        velocity: (0.0, 0.0),
+        collider: Collider::Circle({ radius: 1.0 }),
+        inverse_mass: 1.0 / 2.0,
+      }),
+      // big static body
+      RigidBody({
+        position: (0.0, -1020.0),
+        velocity: (0.0, 0.0),
+        collider: Collider::Circle({ radius: 1000.0 }),
+        inverse_mass: 0.0,
+      }),
+    ],
     gravity: (0.0, -9.81),
   });
 
-  for _ in 0..10 {
-    engine.update(0.1);
+  loop {
+    io.println("FRAME");
+    for body in engine.bodies {
+      let (x, y) = body.position;
+      match body.collider {
+        Collider::Circle({ radius }) {
+          io.println("{x} {y} {radius}");
+        }
+      }
+    }
+    io.println("END");
+    io.flush();
 
-    io.println("all bodies in system:");
-    for body in engine.rigid_bodies {
-      io.println("- {body.position.show()}");
+    match io.read_line() {
+      Some(_) {
+        engine.update(1.0 / 60.0);
+        continue;
+      }
+      None() { break; }
     }
   }
 }

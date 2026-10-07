@@ -1,22 +1,90 @@
-use #root::ops::elementwise;
-
-pub struct* Engine(pub {
-  rigid_bodies: List[RigidBody],
-  gravity: Vec2,
-});
+use #root::ops::elementwise as _;
 
 pub type Vec2 = (F32, F32);
+
+pub struct* Engine(pub {
+  bodies: List[RigidBody],
+  gravity: Vec2,
+});
 
 pub struct* RigidBody(pub {
   position: Vec2,
   velocity: Vec2,
+  collider: Collider,
+  inverse_mass: F32,
 });
+
+pub enum* Collider {
+  Circle({ radius: F32 }),
+  // Rectangle({ half_width: F32, half_height: F32 }),
+}
 
 pub mod Engine {
   pub fn .update(&engine: &Engine, dt: F32) {
-    for &body in &engine.rigid_bodies {
+    resolve_contacts(&engine, dt);
+    integrate_bodies(&engine, dt);
+  }
+}
+
+fn resolve_contacts(&engine: &Engine, dt: F32) {
+  // TODO: replace with a real broadphase
+  for body_a in engine.bodies {
+    for body_b in engine.bodies {
+
+    }
+  }
+}
+
+fn integrate_bodies(&engine: &Engine, dt: F32) {
+  for &body in &engine.bodies {
+    if body.inverse_mass > 0.0 {
       body.velocity += engine.gravity * dt;
       body.position += body.velocity * dt;
     }
   }
 }
+
+/// Find whether two colliders are overlapping, and if so, what the collision
+/// normal and depth is.
+///
+/// This function runs in collider A's reference frame; we assume that A is at
+/// position (0, 0, 0) and has no rotation.
+fn find_contacts(
+  &collider_a: &Collider,
+  &collider_b: &Collider,
+  position_b: Vec2,
+) -> Option[{ normal: Vec2, depth: F32 }] {
+  match (collider_a, collider_b) {
+    (
+      Collider::Circle({ radius: radius_a }),
+      Collider::Circle({ radius: radius_b }),
+    ) {
+      let distance = position_b.len();
+      if distance > radius_a + radius_b {
+        return None();
+      }
+
+      Some({
+        normal: position_b.try_normalize().or_use((1.0, 0.0)),
+        depth: radius_a + radius_b - distance
+      })
+    }
+  }
+}
+
+pub mod Vec2 {
+  pub fn .len((x, y): Vec2) -> F32 {
+    (x * x + y * y).sqrt()
+  }
+
+  pub fn .try_normalize((x, y): Vec2) -> Option[Vec2] {
+    let len = (x, y).len();
+    if len == 0.0 {
+      None()
+    } else {
+      Some((x / len, y / len))
+    }
+  }
+}
+
+use Vec2::{len as _, try_normalize as _};
