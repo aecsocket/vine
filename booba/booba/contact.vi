@@ -1,0 +1,130 @@
+use num::{UnitVec2, Vec2, Rotation, F32, Vec2::{len as _, try_normalize as _, try_normalize_with_len as _, clamp as _, dot as _, midpoint as _}};
+use engine::Collider;
+use #root::ops::elementwise as _;
+
+pub struct* ContactManifold(pub {
+  normal: UnitVec2,
+  point1: ContactPoint,
+  point2: Option[ContactPoint],
+});
+
+pub struct* ContactPoint(pub {
+  position: Vec2,
+  depth: F32,
+});
+
+/// Find whether two colliders are overlapping, and if so, what the collision
+/// normal and depth is.
+///
+/// This function runs in collider A's reference frame; we assume that A is at
+/// position (0, 0, 0) and has no rotation.
+fn find_contacts(
+  &collider_a: &Collider,
+  &collider_b: &Collider,
+  position_b: Vec2,
+  rotation_b: Rotation,
+) -> Option[ContactManifold] {
+  match (collider_a, collider_b) {
+    (
+      Collider::Circle({ radius: radius_a }),
+      Collider::Circle({ radius: radius_b }),
+    ) { contact_circle_circle(radius_a, radius_b, position_b) }
+    (
+      Collider::Rectangle({ half_size: half_size_a }),
+      Collider::Circle({ radius: radius_b }),
+    ) { contact_rectangle_circle(half_size_a, radius_b, position_b) }
+    (
+      Collider::Circle({ radius: radius_a }),
+      Collider::Rectangle({ half_size: half_size_b }),
+    ) {
+      // TODO transform
+      contact_rectangle_circle(half_size_b, radius_a, -position_b)
+    }
+    (
+      Collider::Rectangle(_),
+      Collider::Rectangle(_),
+    ) { None() /* todo */ }
+  }
+}
+
+/// Body A is a circle with radius `radius_a` at the origin.
+/// Body B is a circle at `position_b` relative to A.
+fn contact_circle_circle(
+  radius_a: F32,
+  radius_b: F32,
+  position_b: Vec2,
+) -> Option[ContactManifold] {
+  let distance = position_b.len();
+  if distance > radius_a + radius_b {
+    return None();
+  }
+
+  Some(ContactManifold({
+    normal: position_b.try_normalize().or_use(UnitVec2::X),
+    point1: ContactPoint({
+      position: position_b * 0.5,
+      depth: radius_a + radius_b - distance,
+    }),
+    point2: None(),
+  }))
+}
+
+/// Body A is a rectangle with half-extents `half_size_a` at the origin, axis-aligned.
+/// Body B is a circle at `position_b` relative to A.
+fn contact_rectangle_circle(
+  half_size_a: Vec2,
+  radius_b: F32,
+  position_b: Vec2,
+) -> Option[ContactManifold] {
+  // find closest point of circle on the rect
+  let closest = position_b.clamp(-half_size_a, half_size_a);
+  // how far is the circle from the closest point it could be
+  // on the rect?
+  let delta = position_b - closest;
+
+  let (normal, dist) = delta.try_normalize_with_len();
+  if dist > radius_b {
+    return None();
+  }
+
+  let (normal, depth) = match normal {
+    Some(v) { (v, radius_b - dist) }
+    None() {
+      // circle's center lies exactly on a rectangle's edge
+      // so we find the nearest edge
+      let (cx, cy) = position_b;
+      let (hx, hy) = half_size_a;
+      let (dist_x, dist_y) = (hx - cx.abs(), hy - cy.abs());
+
+      let normal;
+      let face_distance;
+      if dist_x <= dist_y {
+        normal = if cx >= 0.0 { UnitVec2::X } else { UnitVec2::NEG_X };
+        face_distance = dist_x;
+      } else {
+        normal = if cy >= 0.0 { UnitVec2::Y } else { UnitVec2::NEG_Y };
+        face_distance = dist_y;
+      }
+
+      (normal, radius_b + face_distance)
+    }
+  }
+
+  // find the point on the circle's surface
+  // (that is, circle pos + some unit vec * radius)
+  // where the collision is happening *on the circle*
+  let circle_surface = position_b + (normal.get() * radius_b);
+  // find the contact point, halfway between
+  // the closest point on the rect surface
+  // and the contact point on the circle surface
+  let contact_point = circle_surface.midpoint(closest);
+
+  Some(ContactManifold({
+    normal: normal,
+    point1: ContactPoint({
+      position: contact_point,
+      depth: depth,
+    }),
+    point2: None(),
+  }))
+}

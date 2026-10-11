@@ -15,7 +15,7 @@
           "tests/compile/*.vi",
           "tests/misc/*.vi",
           "root/",
-          "booba/"
+          "booba/booba/"
         ]
       }
     }

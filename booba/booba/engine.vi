@@ -1,6 +1,5 @@
+use num::{Vec2, Vec2::{len as _, dot as _, try_normalize as _}};
 use #root::ops::elementwise as _;
-
-pub type Vec2 = (F32, F32);
 
 pub struct* Engine(pub {
   bodies: List[RigidBody],
@@ -17,7 +16,7 @@ pub struct* RigidBody(pub {
 
 pub enum* Collider {
   Circle({ radius: F32 }),
-  // Rectangle({ half_width: F32, half_height: F32 }),
+  Rectangle({ half_size: Vec2 }),
 }
 
 pub mod Engine {
@@ -97,38 +96,6 @@ fn resolve_contact(&body_a: &RigidBody, &body_b: &RigidBody) {
   body_b.position += correction * body_b.inverse_mass;
 }
 
-/// Find whether two colliders are overlapping, and if so, what the collision
-/// normal and depth is.
-///
-/// This function runs in collider A's reference frame; we assume that A is at
-/// position (0, 0, 0) and has no rotation.
-///
-/// Returns:
-/// - `normal`: in what direction do you have to move body B to resolve this
-///   contact?
-/// - `depth`: how far is B penetrating into A (or vice versa)?
-fn find_contacts(
-  &collider_a: &Collider,
-  &collider_b: &Collider,
-  position_b: Vec2,
-) -> Option[{ normal: UnitVec2, depth: F32 }] {
-  match (collider_a, collider_b) {
-    (
-      Collider::Circle({ radius: radius_a }),
-      Collider::Circle({ radius: radius_b }),
-    ) {
-      let distance = position_b.len();
-      if distance > radius_a + radius_b {
-        return None();
-      }
-
-      Some({
-        normal: position_b.try_normalize().or_use(UnitVec2::X),
-        depth: radius_a + radius_b - distance
-      })
-    }
-  }
-}
 
 /// Compute the restitution of two bodies' restitution values.
 //
@@ -137,36 +104,4 @@ fn find_contacts(
 // like the minimum or the average. Box2D uses `max(a, b)`.
 fn effective_restitution(a: F32, b: F32) -> F32 {
   if a > b { a } else { b }
-}
-
-pub mod Vec2 {
-  pub fn .len((x, y): Vec2) -> F32 {
-    (x * x + y * y).sqrt()
-  }
-
-  pub fn .dot((ax, ay): Vec2, (bx, by): Vec2) -> F32 {
-    ax * bx + ay * by
-  }
-
-  pub fn .try_normalize((x, y): Vec2) -> Option[UnitVec2] {
-    let len = (x, y).len();
-    if len == 0.0 {
-      None()
-    } else {
-      Some(UnitVec2((x / len, y / len)))
-    }
-  }
-}
-
-use Vec2::{len as _, dot as _, try_normalize as _};
-
-pub struct* UnitVec2(Vec2);
-
-pub mod UnitVec2 {
-  pub const X: UnitVec2 = UnitVec2((1.0, 0.0));
-  pub const Y: UnitVec2 = UnitVec2((0.0, 1.0));
-
-  pub fn .get(UnitVec2(vec): UnitVec2) -> Vec2 {
-    vec
-  }
 }

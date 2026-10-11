@@ -1,4 +1,6 @@
 mod engine;
+mod num;
+mod contact;
 
 use engine::{RigidBody, Engine, Collider};
 
@@ -11,7 +13,7 @@ pub fn main(&io: &IO) {
         velocity: (0.0, 0.0),
         collider: Collider::Circle({ radius: 1.0 }),
         inverse_mass: 1.0 / 2.0,
-        restitution: 0.3,
+        restitution: 0.5,
       }),
       // ...big static body
       RigidBody({
@@ -22,7 +24,7 @@ pub fn main(&io: &IO) {
         restitution: 0.0,
       }),
     ],
-    gravity: (0.0, -9.81),
+    gravity: (0.0, -9.81 * 2.0),
   });
 
   loop {
@@ -31,7 +33,11 @@ pub fn main(&io: &IO) {
       let (x, y) = body.position;
       match body.collider {
         Collider::Circle({ radius }) {
-          io.println("{x} {y} {radius}");
+          io.println("CIRCLE {x} {y} {radius}");
+        }
+        Collider::Rectangle({ half_size }) {
+          let (half_width, half_height) = half_size;
+          io.println("RECTANGLE {x} {y} {half_width} {half_height}");
         }
       }
     }

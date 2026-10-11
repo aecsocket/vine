@@ -1,24 +1,46 @@
 import io
-import math
+
 from pathlib import Path
 import queue
 import unittest
 
-from viewer import Simulation, read_frames
+from viewer import Simulation, draw_frame, read_frames
 
 
 class ProtocolTests(unittest.TestCase):
     def test_frames(self):
-        frames = list(read_frames(io.StringIO("FRAME\n1 -2 3\n4 5 0.5\nEND\nFRAME\nEND\n")))
-        self.assertEqual(frames, [[(1.0, -2.0, 3.0), (4.0, 5.0, 0.5)], []])
+        frames = list(read_frames(io.StringIO(
+            "FRAME\nCIRCLE 1 -2 3\nRECTANGLE 4 5 0.5 2\nEND\nFRAME\nEND\n"
+        )))
+        self.assertEqual(frames, [[("CIRCLE", 1.0, -2.0, 3.0), ("RECTANGLE", 4.0, 5.0, 0.5, 2.0)], []])
 
     def test_invalid_streams(self):
         for stream in (
-            "1 2 3\n", "END\n", "FRAME\nFRAME\n", "FRAME\n1 2\nEND\n",
-            "FRAME\nnan 2 3\nEND\n", "FRAME\n1 2 -3\nEND\n", "FRAME\n1 2 3\n",
+            "CIRCLE 1 2 3\n", "END\n", "FRAME\nFRAME\n", "FRAME\nCIRCLE 1 2\nEND\n",
+            "FRAME\nCIRCLE nan 2 3\nEND\n", "FRAME\nCIRCLE 1 2 -3\nEND\n", "FRAME\nCIRCLE 1 2 3\n",
+            "FRAME\nRECTANGLE 1 2 3\nEND\n", "FRAME\nRECTANGLE 1 2 -3 4\nEND\n",
+            "FRAME\nRECTANGLE 1 2 3 -4\nEND\n", "FRAME\nRECTANGLE 1 2 3 inf\nEND\n",
+            "FRAME\nTRIANGLE 1 2 3\nEND\n", "FRAME\nCIRCLE 1 2 3 4\nEND\n",
         ):
             with self.subTest(stream=stream), self.assertRaises(ValueError):
                 list(read_frames(io.StringIO(stream)))
+
+
+class RenderingTests(unittest.TestCase):
+    def test_circle_and_rectangle_outlines(self):
+        try:
+            import pygame
+        except ImportError:
+            self.skipTest("Install viewer requirements for rendering tests")
+        screen = pygame.Surface((800, 600))
+        draw_frame(pygame, screen, [
+            ("CIRCLE", 0.0, 0.0, 1.0),
+            ("RECTANGLE", 3.0, 2.0, 1.0, 0.5),
+        ])
+        self.assertEqual(screen.get_at((419, 100))[:3], (130, 210, 160))
+        self.assertEqual(screen.get_at((440, 50))[:3], (130, 210, 160))
+        self.assertEqual(screen.get_at((479, 69))[:3], (130, 210, 160))
+        self.assertEqual(screen.get_at((460, 60))[:3], (24, 26, 32))
 
 
 class HandshakeTests(unittest.TestCase):
@@ -30,14 +52,14 @@ class HandshakeTests(unittest.TestCase):
         try:
             first = simulation.frames.get(timeout=5)
             self.assertIsInstance(first, list)
-            self.assertEqual(first[0][:2], (0.0, 0.0))
-            self.assertTrue(math.isclose(first[0][2], 3.14, rel_tol=1e-6))
+            self.assertEqual(first[0][:3], ("CIRCLE", 0.0, 0.0))
+            self.assertGreater(first[0][3], 0.0)
             with self.assertRaises(queue.Empty):
                 simulation.frames.get(timeout=0.1)
             simulation.step()
             second = simulation.frames.get(timeout=5)
             self.assertIsInstance(second, list)
-            self.assertLess(second[0][1], first[0][1])
+            self.assertLess(second[0][2], first[0][2])
             with self.assertRaises(queue.Empty):
                 simulation.frames.get(timeout=0.1)
         finally:

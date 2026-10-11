@@ -1,0 +1,66 @@
+pub type F32 = #root::prelude::F32;
+
+pub type Vec2 = (F32, F32);
+
+pub struct* Rotation(pub UnitVec2);
+
+pub use F32::{clamp as _};
+pub mod F32 {
+  pub fn .clamp(n: F32, min: F32, max: F32) -> F32 {
+    when {
+      n < min { min }
+      n > max { max }
+      _ { n }
+    }
+  }
+}
+
+pub mod Vec2 {
+  pub fn .clamp((vx, vy): Vec2, (minx, miny): Vec2, (maxx, maxy): Vec2) -> Vec2 {
+    (vx.clamp(minx, maxx), vy.clamp(miny, maxy))
+  }
+
+  pub fn .len((x, y): Vec2) -> F32 {
+    (x * x + y * y).sqrt()
+  }
+
+  pub fn .dot((ax, ay): Vec2, (bx, by): Vec2) -> F32 {
+    ax * bx + ay * by
+  }
+
+  pub fn .try_normalize((x, y): Vec2) -> Option[UnitVec2] {
+    let len = (x, y).len();
+    if len == 0.0 {
+      None()
+    } else {
+      Some(UnitVec2((x / len, y / len)))
+    }
+  }
+
+  pub fn .try_normalize_with_len((x, y): Vec2) -> (Option[UnitVec2], F32) {
+    let len = (x, y).len();
+    let unit_vec = if len == 0.0 {
+      None()
+    } else {
+      Some(UnitVec2((x / len, y / len)))
+    };
+    (unit_vec, len)
+  }
+
+  pub fn .midpoint((ax, ay): Vec2, (bx, by): Vec2) -> Vec2 {
+    ((ax + bx) * 0.5, (ay + by) * 0.5)
+  }
+}
+
+pub struct* UnitVec2(Vec2);
+
+pub mod UnitVec2 {
+  pub const X: UnitVec2 = UnitVec2((1.0, 0.0));
+  pub const NEG_X: UnitVec2 = UnitVec2((-1.0, 0.0));
+  pub const Y: UnitVec2 = UnitVec2((0.0, 1.0));
+  pub const NEG_Y: UnitVec2 = UnitVec2((0.0, -1.0));
+
+  pub fn .get(UnitVec2(vec): UnitVec2) -> Vec2 {
+    vec
+  }
+}

@@ -23,12 +23,19 @@ def read_frames(stream):
             bodies = None
         elif bodies is not None and line not in ("FRAME", "END"):
             try:
-                x, y, radius = map(float, line.split())
-                if not all(map(math.isfinite, (x, y, radius))) or radius < 0:
+                shape, *fields = line.split()
+                values = tuple(map(float, fields))
+                field_count = {"CIRCLE": 3, "RECTANGLE": 4}.get(shape)
+                if len(values) != field_count or not all(map(math.isfinite, values)):
+                    raise ValueError
+                if any(size < 0 for size in values[2:]):
                     raise ValueError
             except ValueError:
-                raise ValueError(f"Line {line_number}: expected finite x y radius (radius >= 0)") from None
-            bodies.append((x, y, radius))
+                raise ValueError(
+                    f"Line {line_number}: expected CIRCLE x y radius or "
+                    "RECTANGLE x y half_width half_height (finite numbers, sizes >= 0)"
+                ) from None
+            bodies.append((shape, *values))
         else:
             raise ValueError(f"Line {line_number}: unexpected {line!r}")
     if bodies is not None:
@@ -41,16 +48,27 @@ def draw_frame(pygame, screen, bodies):
     scale = 20
     pygame.draw.line(screen, (55, 58, 68), (0, origin[1]), (screen.get_width(), origin[1]))
     pygame.draw.line(screen, (55, 58, 68), (origin[0], 0), (origin[0], screen.get_height()))
-    for x, y, radius in bodies:
+    for shape, x, y, *size in bodies:
         center = (round(origin[0] + x * scale), round(origin[1] - y * scale))
-        pygame.draw.circle(screen, (130, 210, 160), center, max(1, round(radius * scale)), 2)
+        color = (130, 210, 160)
+        if shape == "CIRCLE":
+            pygame.draw.circle(screen, color, center, max(1, round(size[0] * scale)), 2)
+        else:
+            half_width, half_height = size
+            rect = pygame.Rect(
+                round(origin[0] + (x - half_width) * scale),
+                round(origin[1] - (y + half_height) * scale),
+                max(1, round(2 * half_width * scale)),
+                max(1, round(2 * half_height * scale)),
+            )
+            pygame.draw.rect(screen, color, rect, 2)
 
 
 class Simulation:
     def __init__(self, binary):
         root = Path(__file__).resolve().parent.parent
         self.process = subprocess.Popen(
-            [str(binary), "run", "booba/", "--no-stats", "--no-perf"],
+            [str(binary), "run", "booba/src/", "--no-stats", "--no-perf"],
             cwd=root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
