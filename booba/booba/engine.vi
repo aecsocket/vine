@@ -7,6 +7,7 @@ pub struct* Engine(pub {
   gravity: Vec2,
 });
 
+#[impl(Show)]
 pub struct* RigidBody(pub {
   position: Vec2,
   rotation: Rot2,
@@ -17,6 +18,7 @@ pub struct* RigidBody(pub {
   restitution: F32,
 });
 
+#[impl(Show)]
 pub enum* Collider {
   Circle({ radius: F32 }),
   Rectangle({ half_size: Vec2 }),

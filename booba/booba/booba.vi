@@ -6,39 +6,73 @@ use arithmetic::Rot2;
 use engine::{RigidBody, Engine, Collider};
 
 pub fn main(&io: &IO) {
+  let bodies = [
+    // The floor's top surface is at y = -5.
+    // RigidBody({
+    //   position: (0.0, -10.0),
+    //   rotation: Rot2::IDENTITY,
+    //   linear_velocity: (0.0, 0.0),
+    //   angular_velocity: 0.0,
+    //   collider: Collider::Rectangle({ half_size: (100.0, 5.0) }),
+    //   inverse_mass: 0.0,
+    //   restitution: 0.0,
+    // }),
+
+    RigidBody({
+      position: (-10.0, 0.0),
+      rotation: Rot2::IDENTITY,
+      linear_velocity: (5.0, 0.0),
+      angular_velocity: 0.0,
+      collider: Collider::Circle({ radius: 1.0 }),
+      inverse_mass: 1.0 / 1.0,
+      restitution: 0.5,
+    }),
+    RigidBody({
+      position: (10.0, 0.0),
+      rotation: Rot2::IDENTITY,
+      linear_velocity: (-5.0, 0.0),
+      angular_velocity: 0.0,
+      collider: Collider::Circle({ radius: 0.5 }),
+      inverse_mass: 1.0 / 1.0,
+      restitution: 0.5,
+    }),
+    RigidBody({
+      position: (10.0, -5.0),
+      rotation: Rot2::IDENTITY,
+      linear_velocity: (-5.0, 0.0),
+      angular_velocity: 0.0,
+      collider: Collider::Circle({ radius: 0.5 }),
+      inverse_mass: 1.0 / 1.0,
+      restitution: 0.5,
+    }),
+  ];
+
+  // let rows: N32 = 2;
+  // let spacing: F32 = 2.05;
+  // let row_height = spacing * (3.0 as F32).sqrt() * 0.5;
+  // for row in 0..rows {
+  // let count = 1;
+  //   // let count = rows - row;
+  //   for column in 0..count {
+  //     bodies.push_back(RigidBody({
+  //       position: (
+  //         (column as F32 - (count - 1) as F32 * 0.5) * spacing,
+  //         -3.95 + row as F32 * row_height,
+  //       ),
+  //       rotation: Rot2::IDENTITY,
+  //       linear_velocity: (0.0, 0.0),
+  //       angular_velocity: 0.0,
+  //       collider: Collider::Circle({ radius: 1.0 }),
+  //       inverse_mass: 1.0 / 2.0,
+  //       restitution: 0.5,
+  //     }));
+  //   }
+  // }
+
   let engine = Engine({
-    bodies: [
-      // small ball that falls down onto the...
-      RigidBody({
-        position: (0.0, 0.0),
-        rotation: Rot2::IDENTITY,
-        linear_velocity: (0.0, 0.0),
-        angular_velocity: 0.0,
-        collider: Collider::Circle({ radius: 1.0 }),
-        inverse_mass: 1.0 / 2.0,
-        restitution: 0.5,
-      }),
-      // ...big static body
-      RigidBody({
-        position: (0.0, -10.0),
-        rotation: Rot2::IDENTITY,
-        linear_velocity: (0.0, 0.0),
-        angular_velocity: 0.0,
-        collider: Collider::Rectangle({ half_size: (100.0, 5.0) }),
-        inverse_mass: 0.0,
-        restitution: 0.0,
-      }),
-      // RigidBody({
-      //   position: (-50.0, -1020.0),
-      //   rotation: Rot2::IDENTITY,
-      //   linear_velocity: (0.0, 0.0),
-      //   angular_velocity: 0.0,
-      //   collider: Collider::Circle({ radius: 1000.0 }),
-      //   inverse_mass: 0.0,
-      //   restitution: 0.0,
-      // }),
-    ],
-    gravity: (0.0, -9.81 * 2.0),
+    bodies: bodies,
+    gravity: (0.0, 0.0),
+    // gravity: (0.0, -9.81 * 2.0),
   });
 
   loop {

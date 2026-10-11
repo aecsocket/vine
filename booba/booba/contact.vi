@@ -2,6 +2,7 @@ use engine::{RigidBody, Collider};
 use arithmetic as _;
 use arithmetic::{Vec2, UnitVec2, Rot2};
 use #root::ops::elementwise as _;
+use #root::debug;
 
 pub fn resolve_contacts(
   &body_a: &RigidBody,
@@ -9,22 +10,25 @@ pub fn resolve_contacts(
 ) {
   let rel_position = body_b.position - body_a.position;
   let rel_rotation = body_b.rotation.inverse() * body_a.rotation;
-  let contact = match find_contacts(
+
+  let contact = find_contacts(
     &body_a.collider,
     &body_b.collider,
     rel_position,
     rel_rotation,
-  ) {
+  );
+  let contact = match contact {
     Some(contact) { contact }
     None() { return; }
   };
   // we know they're colliding; let's apply impulses to solve it
 
   let inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass;
-  if inverse_mass_sum <= 0.0 {
-    // two static bodies colliding?
-    return;
-  }
+  let restitution = effective_restitution(body_a.restitution, body_b.restitution);
+  // if inverse_mass_sum <= 0.0 {
+  //   // two static bodies colliding?
+  //   return;
+  // }
 
   // how quickly is A approaching B, *along the collision normal*?
   let relative_velocity = body_b.linear_velocity - body_a.linear_velocity;
@@ -33,9 +37,7 @@ pub fn resolve_contacts(
   if normal_velocity < 0.0 {
     // A and B are approaching, so we want to apply impulses to push them away.
     // this part is physically correct, if simplistic.
-
     // if normal_velocity > 0, they'd be separating, so do nothing.
-    let restitution = effective_restitution(body_a.restitution, body_b.restitution);
 
     // compute what impulse (instantaneous change in acceleration)
     // we want to appply to our bodies
@@ -44,8 +46,8 @@ pub fn resolve_contacts(
 
     // ..and actually apply it to the bodies
     // F = ma => a = F/m => a = F*(1/m) => F * inverse_mass
-    body_a.linear_velocity -= impulse * body_a.inverse_mass;
     body_b.linear_velocity += impulse * body_b.inverse_mass;
+    body_a.linear_velocity -= impulse * body_a.inverse_mass;
   }
 
   // separately from velocity, we want to push them apart *right now*
@@ -59,8 +61,8 @@ pub fn resolve_contacts(
   let depth = if depth1 > depth2 { depth1 } else { depth2 };
 
   let correction = contact.normal.get() * (0.8 * depth / inverse_mass_sum);
-  body_a.position -= correction * body_a.inverse_mass;
   body_b.position += correction * body_b.inverse_mass;
+  body_a.position -= correction * body_a.inverse_mass;
 }
 
 /// Compute the restitution of two bodies' restitution values.
@@ -89,6 +91,23 @@ struct* ContactPoint(pub {
 /// This function runs in collider A's reference frame; we assume that A is at
 /// position (0, 0, 0) and has no rotation.
 fn find_contacts(
+  &collider_a: &Collider,
+  &collider_b: &Collider,
+  position_b: Vec2,
+  rotation_b: Rot2,
+) -> Option[ContactManifold] {
+  // None()
+  Some(ContactManifold({
+    normal: UnitVec2::X,
+    point1: ContactPoint({
+      position: (0.0, 0.0),
+      depth: 0.0,
+    }),
+    point2: None(),
+  }))
+}
+
+fn find_contacts_(
   &collider_a: &Collider,
   &collider_b: &Collider,
   position_b: Vec2,

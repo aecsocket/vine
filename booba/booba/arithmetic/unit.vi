@@ -2,6 +2,7 @@ use vector::Vec2;
 use #root::ops::arithmetic::Neg;
 use #root::ops::elementwise as _;
 
+#[impl(Show)]
 pub struct* UnitVec2(Vec2);
 
 pub mod UnitVec2 {

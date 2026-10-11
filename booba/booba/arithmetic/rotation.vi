@@ -2,6 +2,7 @@ use vector::Vec2;
 use unit::UnitVec2;
 use #root::ops::arithmetic::Mul;
 
+#[impl(Show)]
 pub struct* Rot2(pub UnitVec2);
 
 pub mod Rot2 {
