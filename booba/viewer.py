@@ -68,7 +68,7 @@ class Simulation:
     def __init__(self, binary):
         root = Path(__file__).resolve().parent.parent
         self.process = subprocess.Popen(
-            [str(binary), "run", "booba/src/", "--no-stats", "--no-perf"],
+            [str(binary), "run", "booba/booba/", "--no-stats", "--no-perf"],
             cwd=root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

@@ -1,6 +1,5 @@
 use arithmetic::{Vec2, Rot2};
 use arithmetic as _;
-use contact::find_contacts;
 use #root::ops::elementwise as _;
 
 pub struct* Engine(pub {
@@ -26,11 +25,11 @@ pub enum* Collider {
 pub mod Engine {
   pub fn .update(&engine: &Engine, dt: F32) {
     integrate_bodies(&engine, dt);
-    resolve_contacts(&engine);
+    resolve_all_contacts(&engine);
   }
 }
 
-fn resolve_contacts(&engine: &Engine) {
+fn resolve_all_contacts(&engine: &Engine) {
   // TODO: replace with a real broadphase
   for (i, body_a) in engine.bodies.iter_ref().enumerate() {
     // this skips:
@@ -38,7 +37,7 @@ fn resolve_contacts(&engine: &Engine) {
     // - the reverse pair, like if we previous did (a, b)
     //   then we won't do (b, a) cause that's pointless
     for body_b in engine.bodies.iter_ref().skip(i + 1) {
-      resolve_contact(body_a, body_b);
+      contact::resolve_contacts(body_a, body_b);
     }
   }
 }
@@ -54,64 +53,4 @@ fn integrate_bodies(&engine: &Engine, dt: F32) {
       body.rotation = delta_rotation * body.rotation;
     }
   }
-}
-
-fn resolve_contact(&body_a: &RigidBody, &body_b: &RigidBody) {
-  let rel_position = body_b.position - body_a.position;
-  let rel_rotation = body_b.rotation.inverse() * body_a.rotation;
-  let contact = match find_contacts(
-    &body_a.collider,
-    &body_b.collider,
-    rel_position,
-    rel_rotation,
-  ) {
-    Some(contact) { contact }
-    None() { return; }
-  };
-  // we know they're colliding; let's apply impulses to solve it
-
-  let inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass;
-  if inverse_mass_sum <= 0.0 {
-    // two static bodies colliding?
-    return;
-  }
-
-  // how quickly is A approaching B, *along the collision normal*?
-  let relative_velocity = body_b.linear_velocity - body_a.linear_velocity;
-  let normal_velocity = relative_velocity.dot(contact.normal.get());
-
-  if normal_velocity < 0.0 {
-    // A and B are approaching, so we want to apply impulses to push them away.
-    // this part is physically correct, if simplistic.
-
-    // if normal_velocity > 0, they'd be separating, so do nothing.
-    let restitution = effective_restitution(body_a.restitution, body_b.restitution);
-
-    // compute what impulse (instantaneous change in acceleration)
-    // we want to appply to our bodies
-    let magnitude = -(1.0 + restitution) * normal_velocity / inverse_mass_sum;
-    let impulse = contact.normal.get() * magnitude;
-
-    // ..and actually apply it to the bodies
-    // F = ma => a = F/m => a = F*(1/m) => F * inverse_mass
-    body_a.velocity -= impulse * body_a.inverse_mass;
-    body_b.velocity += impulse * body_b.inverse_mass;
-  }
-
-  // separately from velocity, we want to push them apart *right now*
-  // so that they're no longer touching.
-  // this part is NOT physically correct, but useful for simulation stability.
-  let correction = contact.normal.get() * (0.8 * contact.depth / inverse_mass_sum);
-  body_a.position -= correction * body_a.inverse_mass;
-  body_b.position += correction * body_b.inverse_mass;
-}
-
-
-/// Compute the restitution of two bodies' restitution values.
-//
-// Currently this is hardcoded to `max(a, b)`, so that we get the bounciest
-// results possible, but in a real physics engine you can use other functions
-// like the minimum or the average. Box2D uses `max(a, b)`.
-fn effective_restitution(a: F32, b: F32) -> F32 {
-  if a > b { a } else { b }
 }

@@ -2,6 +2,7 @@ mod engine;
 mod arithmetic;
 mod contact;
 
+use arithmetic::Rot2;
 use engine::{RigidBody, Engine, Collider};
 
 pub fn main(&io: &IO) {
@@ -10,19 +11,32 @@ pub fn main(&io: &IO) {
       // small ball that falls down onto the...
       RigidBody({
         position: (0.0, 0.0),
-        velocity: (0.0, 0.0),
+        rotation: Rot2::IDENTITY,
+        linear_velocity: (0.0, 0.0),
+        angular_velocity: 0.0,
         collider: Collider::Circle({ radius: 1.0 }),
         inverse_mass: 1.0 / 2.0,
         restitution: 0.5,
       }),
       // ...big static body
       RigidBody({
-        position: (-50.0, -1020.0),
-        velocity: (0.0, 0.0),
-        collider: Collider::Circle({ radius: 1000.0 }),
+        position: (0.0, -10.0),
+        rotation: Rot2::IDENTITY,
+        linear_velocity: (0.0, 0.0),
+        angular_velocity: 0.0,
+        collider: Collider::Rectangle({ half_size: (100.0, 5.0) }),
         inverse_mass: 0.0,
         restitution: 0.0,
       }),
+      // RigidBody({
+      //   position: (-50.0, -1020.0),
+      //   rotation: Rot2::IDENTITY,
+      //   linear_velocity: (0.0, 0.0),
+      //   angular_velocity: 0.0,
+      //   collider: Collider::Circle({ radius: 1000.0 }),
+      //   inverse_mass: 0.0,
+      //   restitution: 0.0,
+      // }),
     ],
     gravity: (0.0, -9.81 * 2.0),
   });

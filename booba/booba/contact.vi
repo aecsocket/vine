@@ -1,12 +1,75 @@
-use engine::Collider;
+use engine::{RigidBody, Collider};
 use arithmetic as _;
 use arithmetic::{Vec2, UnitVec2, Rot2};
 use #root::ops::elementwise as _;
 
 pub fn resolve_contacts(
-  &collider_a: &Collider,
+  &body_a: &RigidBody,
+  &body_b: &RigidBody,
 ) {
+  let rel_position = body_b.position - body_a.position;
+  let rel_rotation = body_b.rotation.inverse() * body_a.rotation;
+  let contact = match find_contacts(
+    &body_a.collider,
+    &body_b.collider,
+    rel_position,
+    rel_rotation,
+  ) {
+    Some(contact) { contact }
+    None() { return; }
+  };
+  // we know they're colliding; let's apply impulses to solve it
 
+  let inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass;
+  if inverse_mass_sum <= 0.0 {
+    // two static bodies colliding?
+    return;
+  }
+
+  // how quickly is A approaching B, *along the collision normal*?
+  let relative_velocity = body_b.linear_velocity - body_a.linear_velocity;
+  let normal_velocity = relative_velocity.dot(contact.normal.get());
+
+  if normal_velocity < 0.0 {
+    // A and B are approaching, so we want to apply impulses to push them away.
+    // this part is physically correct, if simplistic.
+
+    // if normal_velocity > 0, they'd be separating, so do nothing.
+    let restitution = effective_restitution(body_a.restitution, body_b.restitution);
+
+    // compute what impulse (instantaneous change in acceleration)
+    // we want to appply to our bodies
+    let magnitude = -(1.0 + restitution) * normal_velocity / inverse_mass_sum;
+    let impulse = contact.normal.get() * magnitude;
+
+    // ..and actually apply it to the bodies
+    // F = ma => a = F/m => a = F*(1/m) => F * inverse_mass
+    body_a.linear_velocity -= impulse * body_a.inverse_mass;
+    body_b.linear_velocity += impulse * body_b.inverse_mass;
+  }
+
+  // separately from velocity, we want to push them apart *right now*
+  // so that they're no longer touching.
+  // this part is NOT physically correct, but useful for simulation stability.
+
+  // how far apart do we push them?
+  // the maximum of how deep either of the two points are inside.
+  let depth1 = contact.point1.depth;
+  let depth2 = contact.point2.map(fn? (point: ContactPoint) { point.depth }).or_use(0.0);
+  let depth = if depth1 > depth2 { depth1 } else { depth2 };
+
+  let correction = contact.normal.get() * (0.8 * depth / inverse_mass_sum);
+  body_a.position -= correction * body_a.inverse_mass;
+  body_b.position += correction * body_b.inverse_mass;
+}
+
+/// Compute the restitution of two bodies' restitution values.
+//
+// Currently this is hardcoded to `max(a, b)`, so that we get the bounciest
+// results possible, but in a real physics engine you can use other functions
+// like the minimum or the average. Box2D uses `max(a, b)`.
+fn effective_restitution(a: F32, b: F32) -> F32 {
+  if a > b { a } else { b }
 }
 
 struct* ContactManifold(pub {
@@ -44,29 +107,38 @@ fn find_contacts(
       Collider::Circle({ radius: radius_a }),
       Collider::Rectangle({ half_size: half_size_b }),
     ) {
-      let circle_pos_b = rotation_b.inverse() * -position_b;
-      contact_rectangle_circle(half_size_b, radius_a, circle_pos_b)
-        .map(fn? (manifold: ContactManifold) {
-          ContactManifold({
-            normal: -(rotation_b * manifold.normal),
-            point1: ContactPoint({
-              position: rotation_b * manifold.point1.position + position_b,
-              depth: manifold.point1.depth,
-            }),
-            point2: manifold.point2.map(fn? (point: ContactPoint) {
-              ContactPoint({
-                position: rotation_b * point.position + position_b,
-                depth: point.depth,
-              })
-            })
-          })
-        })
+      inverse_of(position_b, rotation_b, fn? (new_position) {
+        contact_rectangle_circle(half_size_b, radius_a, new_position)
+      })
     }
     (
       Collider::Rectangle(_),
       Collider::Rectangle(_),
     ) { None() /* todo */ }
   }
+}
+
+fn inverse_of[F?; fn F(Vec2) -> Option[ContactManifold]](
+  position_b: Vec2,
+  rotation_b: Rot2,
+  f: F,
+) -> Option[ContactManifold] {
+  let position_b_in_frame_a = rotation_b.inverse() * -position_b;
+  f(position_b_in_frame_a).map(fn? (manifold: ContactManifold) {
+    ContactManifold({
+      normal: -(rotation_b * manifold.normal),
+      point1: ContactPoint({
+        position: rotation_b * manifold.point1.position + position_b,
+        depth: manifold.point1.depth,
+      }),
+      point2: manifold.point2.map(fn? (point: ContactPoint) {
+        ContactPoint({
+          position: rotation_b * point.position + position_b,
+          depth: point.depth,
+        })
+      })
+    })
+  })
 }
 
 /// Body A is a circle with radius `radius_a` at the origin.
