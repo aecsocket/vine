@@ -1,0 +1,72 @@
+use vector::Vec2;
+use #root::ops::arithmetic::Neg;
+use #root::ops::elementwise as _;
+
+pub struct* UnitVec2(Vec2);
+
+pub mod UnitVec2 {
+  pub const X: UnitVec2 = UnitVec2((1.0, 0.0));
+  pub const NEG_X: UnitVec2 = UnitVec2((-1.0, 0.0));
+  pub const Y: UnitVec2 = UnitVec2((0.0, 1.0));
+  pub const NEG_Y: UnitVec2 = UnitVec2((0.0, -1.0));
+
+  pub fn new_unchecked(vec: Vec2) -> UnitVec2 {
+    UnitVec2(vec)
+  }
+
+  pub fn .get(UnitVec2(vec): UnitVec2) -> Vec2 {
+    vec
+  }
+
+  pub fn .swap_xy(UnitVec2((x, y)): UnitVec2) -> UnitVec2 {
+    UnitVec2((y, x))
+  }
+
+  pub fn .neg_x(UnitVec2((x, y)): UnitVec2) -> UnitVec2 {
+    UnitVec2((-x, y))
+  }
+
+  pub fn .neg_y(UnitVec2((x, y)): UnitVec2) -> UnitVec2 {
+    UnitVec2((x, -y))
+  }
+}
+
+pub use neg as _;
+pub impl neg: Neg[UnitVec2, UnitVec2] {
+  fn neg(UnitVec2(vec): UnitVec2) -> UnitVec2 {
+    UnitVec2(-vec)
+  }
+}
+
+pub trait[Vector] Normalize[UnitVector] {
+  fn .normalize(vec: Vector) -> Option[UnitVector];
+}
+
+pub use normalize_vec2 as _;
+pub impl normalize_vec2: Normalize[Vec2, UnitVec2] {
+  fn normalize((x, y): Vec2) -> Option[UnitVec2] {
+    let len = (x, y).len();
+    if len == 0.0 {
+      None()
+    } else {
+      Some(UnitVec2((x / len, y / len)))
+    }
+  }
+}
+
+pub trait[Vector] NormalizeWithLen[UnitVector, Scalar] {
+  fn .normalize_with_len(vec: Vector) -> (Option[UnitVector], Scalar);
+}
+
+pub use normalize_with_len_vec2 as _;
+pub impl normalize_with_len_vec2: NormalizeWithLen[Vec2, UnitVec2, F32] {
+  fn normalize_with_len((x, y): Vec2) -> (Option[UnitVec2], F32) {
+    let len = (x, y).len();
+    let unit_vec = if len == 0.0 {
+      None()
+    } else {
+      Some(UnitVec2((x / len, y / len)))
+    };
+    (unit_vec, len)
+  }
+}

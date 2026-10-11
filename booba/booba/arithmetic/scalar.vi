@@ -1,0 +1,35 @@
+use #root::ops::arithmetic::{Add, Mul};
+use #root::ops::comparison::Lt;
+
+pub trait[A] Clamp {
+  fn .clamp(value: A, min: A, max: A) -> A;
+}
+
+pub use clamp_scalar as _;
+pub impl clamp_scalar[A?; Lt[A]]: Clamp[A] {
+  fn clamp(value: A, min: A, max: A) -> A {
+    when {
+      value < min { min }
+      value > max { max }
+      _ { value }
+    }
+  }
+}
+
+pub use clamp_vec2 as _;
+pub impl clamp_vec2: Clamp[Vec2] {
+  fn clamp((value_x, value_y): Vec2, (min_x, min_y): Vec2, (max_x, max_y): Vec2) -> Vec2 {
+    (value_x.clamp(min_x, max_x), value_y.clamp(min_y, max_y))
+  }
+}
+
+pub trait[A] Midpoint {
+  fn .midpoint(a: A, b: A) -> A;
+}
+
+pub use midpoint as _;
+pub impl midpoint[A?; Add[A, A, A], Mul[A, F32, A]]: Midpoint[A] {
+  fn midpoint(a: A, b: A) -> A {
+    (a + b) * 0.5
+  }
+}

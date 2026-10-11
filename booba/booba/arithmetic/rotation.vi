@@ -1,0 +1,89 @@
+use vector::Vec2;
+use unit::UnitVec2;
+use #root::ops::arithmetic::Mul;
+
+pub struct* Rot2(pub UnitVec2);
+
+pub mod Rot2 {
+  pub fn new_unchecked(cos: F32, sin: F32) -> Rot2 {
+    Rot2(UnitVec2::new_unchecked((cos, sin)))
+  }
+
+  pub fn from_angle(angle: F32) -> Rot2 {
+    let sin_cos = direction(angle);
+    let cos_sin = sin_cos.swap_xy();
+    Rot2(cos_sin)
+  }
+
+  pub fn .inverse(Rot2(unit): Rot2) -> Rot2 {
+    Rot2(unit.neg_y())
+  }
+}
+
+pub use compose_rot2 as _;
+pub impl compose_rot2: Mul[Rot2, Rot2, Rot2] {
+  fn mul(Rot2(a): Rot2, Rot2(b): Rot2) -> Rot2 {
+    let (c1, s1) = a.get();
+    let (c2, s2) = b.get();
+    Rot2(UnitVec2::new_unchecked((
+      c2 * c1 - s2 * s1,
+      s2 * c1 + c2 * s1
+    )))
+  }
+}
+
+pub use apply_rot2 as _;
+pub impl apply_rot2: Mul[Rot2, Vec2, Vec2] {
+  fn mul(Rot2(rot): Rot2, (x, y): Vec2) -> Vec2 {
+    let (c, s) = rot.get();
+    (
+      c * x - s * y,
+      s * x + c * y
+    )
+  }
+}
+
+pub use apply_rot2_unit as _;
+pub impl apply_rot2_unit: Mul[Rot2, UnitVec2, UnitVec2] {
+  fn mul(rot: Rot2, vec: UnitVec2) -> UnitVec2 {
+    let vec = rot * vec.get();
+    UnitVec2::new_unchecked(vec)
+  }
+}
+
+/// Approximates (sin(angle), cos(angle)) for an angle in radians.
+/// Keep angles near zero: remainder-based reduction loses accuracy for large F32 inputs.
+fn direction(angle: F32) -> UnitVec2 {
+  let pi = 3.141592653589793;
+  let half_pi = 1.5707963267948966;
+  let tau = 6.283185307179586;
+
+  let x = angle % tau;
+  let x = when {
+      x > pi { x - tau }
+      x < -pi { x + tau }
+      _ { x }
+    };
+
+  // Reflect into [-pi/2, pi/2], preserving sine and reversing cosine.
+  let (x, cos_sign) = when {
+    x > half_pi { (pi - x, -1.0) }
+    x < -half_pi { (-pi - x, -1.0) }
+    _ { (x, 1.0) }
+  };
+
+  let z = x * x;
+  let sin = x * (1.0 + z * (-1.0 / 6.0
+    + z * (1.0 / 120.0
+    + z * (-1.0 / 5040.0
+    + z * (1.0 / 362880.0
+    + z * (-1.0 / 39916800.0))))));
+  let cos = 1.0 + z * (-1.0 / 2.0
+    + z * (1.0 / 24.0
+    + z * (-1.0 / 720.0
+    + z * (1.0 / 40320.0
+    + z * (-1.0 / 3628800.0
+    + z * (1.0 / 479001600.0))))));
+
+  UnitVec2::new_unchecked((sin, cos * cos_sign))
+}

@@ -1,0 +1,23 @@
+pub type Vec2 = (F32, F32);
+
+pub trait[Vector] Len[Scalar] {
+  fn .len(vec: Vector) -> Scalar;
+}
+
+pub use len_vec2 as _;
+pub impl len_vec2: Len[Vec2, F32] {
+  fn len((x, y): Vec2) -> F32 {
+    (x * x + y * y).sqrt()
+  }
+}
+
+pub trait[Vector] Dot[Scalar] {
+  fn .dot(a: Vector, b: Vector) -> Scalar;
+}
+
+pub use dot_vec2 as _;
+pub impl dot_vec2: Dot[Vec2, F32] {
+  fn dot((ax, ay): Vec2, (bx, by): Vec2) -> F32 {
+    ax * bx + ay * by
+  }
+}

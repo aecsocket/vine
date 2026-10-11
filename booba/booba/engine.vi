@@ -1,4 +1,6 @@
-use num::{Vec2, Vec2::{len as _, dot as _, try_normalize as _}};
+use arithmetic::{Vec2, Rot2};
+use arithmetic as _;
+use contact::find_contacts;
 use #root::ops::elementwise as _;
 
 pub struct* Engine(pub {
@@ -8,7 +10,9 @@ pub struct* Engine(pub {
 
 pub struct* RigidBody(pub {
   position: Vec2,
-  velocity: Vec2,
+  rotation: Rot2,
+  linear_velocity: Vec2,
+  angular_velocity: F32,
   collider: Collider,
   inverse_mass: F32,
   restitution: F32,
@@ -42,18 +46,24 @@ fn resolve_contacts(&engine: &Engine) {
 fn integrate_bodies(&engine: &Engine, dt: F32) {
   for &body in &engine.bodies {
     if body.inverse_mass > 0.0 {
-      body.velocity += engine.gravity * dt;
-      body.position += body.velocity * dt;
+      body.linear_velocity += engine.gravity * dt;
+      body.position += body.linear_velocity * dt;
+
+      let delta_angle = body.angular_velocity * dt;
+      let delta_rotation = Rot2::from_angle(delta_angle);
+      body.rotation = delta_rotation * body.rotation;
     }
   }
 }
 
 fn resolve_contact(&body_a: &RigidBody, &body_b: &RigidBody) {
   let rel_position = body_b.position - body_a.position;
+  let rel_rotation = body_b.rotation.inverse() * body_a.rotation;
   let contact = match find_contacts(
     &body_a.collider,
     &body_b.collider,
     rel_position,
+    rel_rotation,
   ) {
     Some(contact) { contact }
     None() { return; }
@@ -67,7 +77,7 @@ fn resolve_contact(&body_a: &RigidBody, &body_b: &RigidBody) {
   }
 
   // how quickly is A approaching B, *along the collision normal*?
-  let relative_velocity = body_b.velocity - body_a.velocity;
+  let relative_velocity = body_b.linear_velocity - body_a.linear_velocity;
   let normal_velocity = relative_velocity.dot(contact.normal.get());
 
   if normal_velocity < 0.0 {
