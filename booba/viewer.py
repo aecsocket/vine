@@ -77,10 +77,11 @@ class Simulation:
     def __init__(self, binary):
         root = Path(__file__).resolve().parent.parent
         self.process = subprocess.Popen(
-            [str(binary), "run", "booba/booba/", "--no-stats", "--no-perf"],
+            [str(binary), "run", "booba/booba/"],
             cwd=root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            start_new_session=True,
             text=True,
             bufsize=1,
         )
@@ -108,8 +109,9 @@ class Simulation:
         except BrokenPipeError:
             pass
         try:
-            self.process.wait(timeout=1)
+            self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
+            print("Vine did not exit after EOF; terminating it. Final stats may be unavailable.", file=sys.stderr)
             self.process.terminate()
             try:
                 self.process.wait(timeout=1)
@@ -122,7 +124,7 @@ class Simulation:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vine", type=Path, default=Path(__file__).resolve().parent.parent / "target/debug/vine")
+    parser.add_argument("--vine", type=Path, default=Path(__file__).resolve().parent.parent / "target/release/vine")
     parser.add_argument("--frames", type=int, help="Exit after this many displayed frames (for smoke tests)")
     args = parser.parse_args()
     if args.frames is not None and args.frames <= 0:
@@ -137,7 +139,7 @@ def main():
     try:
         simulation = Simulation(args.vine.resolve())
     except OSError as error:
-        print(f"Cannot launch Vine: {error}. Build it with `cargo build --bin vine`.", file=sys.stderr)
+        print(f"Cannot launch Vine: {error}. Build it with `cargo build --release --bin vine`.", file=sys.stderr)
         return 1
 
     try:
@@ -178,7 +180,7 @@ def main():
                 displayed += 1
             draw_frame(pygame, screen, bodies)
             pygame.display.flip()
-            clock.tick(30)
+            clock.tick(60)
             if args.frames is not None and displayed >= args.frames:
                 return 0
             if not waiting and (not paused or single_step):
@@ -189,6 +191,8 @@ def main():
                     return 1
                 waiting = True
                 single_step = False
+    except KeyboardInterrupt:
+        return 130
     finally:
         simulation.close()
         pygame.quit()

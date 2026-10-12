@@ -85,7 +85,7 @@ pub fn main(&io: &IO) {
 
     match io.read_line() {
       Some(_) {
-        engine.update(1.0 / 30.0);
+        engine.update(1.0 / 60.0);
         continue;
       }
       None() { break; }

@@ -1,3 +1,2 @@
 run:
-    cargo run --release --bin vine -- run --workers 16 --breadth-first booba --no-stats --no-perf \
-    | .venv/bin/python viewer.py
+    .venv/bin/python viewer.py
