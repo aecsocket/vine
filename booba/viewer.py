@@ -25,15 +25,16 @@ def read_frames(stream):
             try:
                 shape, *fields = line.split()
                 values = tuple(map(float, fields))
-                field_count = {"CIRCLE": 3, "RECTANGLE": 4}.get(shape)
-                if len(values) != field_count or not all(map(math.isfinite, values)):
+                field_counts = {"CIRCLE": (3,), "RECTANGLE": (4, 6)}.get(shape, ())
+                if len(values) not in field_counts or not all(map(math.isfinite, values)):
                     raise ValueError
-                if any(size < 0 for size in values[2:]):
+                sizes = values[2:3] if shape == "CIRCLE" else values[2:4]
+                if any(size < 0 for size in sizes):
                     raise ValueError
             except ValueError:
                 raise ValueError(
                     f"Line {line_number}: expected CIRCLE x y radius or "
-                    "RECTANGLE x y half_width half_height (finite numbers, sizes >= 0)"
+                    "RECTANGLE x y half_width half_height [cos sin] (finite numbers, sizes >= 0)"
                 ) from None
             bodies.append((shape, *values))
         else:
@@ -54,14 +55,22 @@ def draw_frame(pygame, screen, bodies):
         if shape == "CIRCLE":
             pygame.draw.circle(screen, color, center, max(1, round(size[0] * scale)), 2)
         else:
-            half_width, half_height = size
-            rect = pygame.Rect(
-                round(origin[0] + (x - half_width) * scale),
-                round(origin[1] - (y + half_height) * scale),
-                max(1, round(2 * half_width * scale)),
-                max(1, round(2 * half_height * scale)),
-            )
-            pygame.draw.rect(screen, color, rect, 2)
+            half_width, half_height = size[:2]
+            cos, sin = size[2:] if len(size) == 4 else (1.0, 0.0)
+            corners = []
+            for local_x, local_y in (
+                (-half_width, -half_height),
+                (half_width, -half_height),
+                (half_width, half_height),
+                (-half_width, half_height),
+            ):
+                world_x = x + cos * local_x - sin * local_y
+                world_y = y + sin * local_x + cos * local_y
+                corners.append((
+                    round(origin[0] + world_x * scale),
+                    round(origin[1] - world_y * scale),
+                ))
+            pygame.draw.polygon(screen, color, corners, 2)
 
 
 class Simulation:

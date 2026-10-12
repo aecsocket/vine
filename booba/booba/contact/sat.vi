@@ -1,28 +1,27 @@
 use arithmetic as _;
-use arithmetic::{Vec2, UnitVec2, Rot2};
-use contact::ContactManifold;
-use util::iter::peeking;
+use arithmetic::{Vec2, UnitVec2};
+use contact::{ContactManifold, ContactPoint};
+use util::iter::peeking as _;
 
-pub fn sat(
+pub fn find_contacts(
   &vertices_a: &List[Vec2],
   &vertices_b: &List[Vec2],
 ) -> Option[ContactManifold] {
   let face_a = match find_face(&vertices_a, &vertices_b) {
-    Some(face) { face },
+    Some(face) { face }
     None() { return None(); }
   };
   let face_b = match find_face(&vertices_b, &vertices_a) {
-    Some(face) { face },
+    Some(face) { face }
     None() { return None(); }
   };
   // overlapping!
 
   if face_a.separation >= face_b.separation {
-
+    build_manifold(face_a, &vertices_b, false)
+  } else {
+    build_manifold(face_b, &vertices_a, true)
   }
-
-
-  None()
 }
 
 struct* Face({
@@ -80,7 +79,7 @@ fn find_face(
     // using which we're gonna project a bunch of vertices
     let (edge_x, edge_y) = next - current;
     let normal = match (edge_y, -edge_x).normalize() {
-      Some(normal) { normal },
+      Some(normal) { normal }
       None() {
         // edge_y, edge_x are zero or close to zero;
         // likely `edge` is a duplicate of the last point,
@@ -136,4 +135,86 @@ fn project(&vertices: &List[Vec2], axis: UnitVec2) -> Vec2 {
   }
 
   (min, max)
+}
+
+// SLOP BELOW: i lowkey gave up and got it to do the rest im tired
+
+fn find_incident_edge(&vertices: &List[Vec2], normal: UnitVec2) -> Option[(Vec2, Vec2)] {
+  let first = match vertices.iter_ref().advance() {
+    Some(&vertex, _) { vertex }
+    None() { return None(); }
+  };
+  let best = None[(Vec2, Vec2)]();
+  let best_score = F32::inf;
+  let iter = vertices.iter_ref().forked().peeking();
+  while iter.next() is Some(start) {
+    let end = iter.peek().as_fork().or_use(first);
+    let (x, y) = end - start;
+    let outward = match (y, -x).normalize() {
+      Some(outward) { outward }
+      None() { continue; }
+    };
+    let score = outward.get().dot(normal.get());
+    if score < best_score {
+      best_score = score;
+      best = Some(start, end);
+    }
+  }
+  best
+}
+
+// Keep dot(normal, point) <= offset, including a lone point at a corner.
+fn clip_segment(points: List[Vec2], normal: Vec2, offset: F32) -> List[Vec2] {
+  let iter = points.iter().peeking();
+  let start = match iter.next() {
+    Some(start) { start }
+    None() { return []; }
+  };
+  let distance_start = start.dot(normal) - offset;
+  let result = [];
+  if distance_start <= 0.0 {
+    result.push_back(start);
+  }
+  if iter.next() is Some(end) {
+    let distance_end = end.dot(normal) - offset;
+    if (distance_start < 0.0 and distance_end > 0.0)
+      or (distance_start > 0.0 and distance_end < 0.0) {
+      let fraction = distance_start / (distance_start - distance_end);
+      result.push_back(start + (end - start) * fraction);
+    }
+    if distance_end <= 0.0 {
+      result.push_back(end);
+    }
+  }
+  result
+}
+
+fn build_manifold(reference: Face, &vertices: &List[Vec2], flip_normal: Bool) -> Option[ContactManifold] {
+  let (start, end) = match find_incident_edge(&vertices, reference.normal) {
+    Some(edge) { edge }
+    None() { return None(); }
+  };
+  let tangent = match (reference.end - reference.start).normalize() {
+    Some(tangent) { tangent.get() }
+    None() { return None(); }
+  };
+  let points = clip_segment([start, end], -tangent, (-tangent).dot(reference.start));
+  let points = clip_segment(points, tangent, tangent.dot(reference.end));
+  let contacts = [];
+  for point in points {
+    let separation = reference.normal.get().dot(point - reference.start);
+    if separation <= 0.0 {
+      contacts.push_back(ContactPoint({ position: point, depth: -separation }));
+    }
+  }
+  let point1 = match contacts.pop_front() {
+    Some(point) { point }
+    None() { return None(); }
+  };
+  let point2 = contacts.pop_front();
+  Some(ContactManifold({
+    normal: if flip_normal { -reference.normal } else { reference.normal },
+    point1: point1,
+    point2: point2,
+  }))
 }

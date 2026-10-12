@@ -14,6 +14,12 @@ class ProtocolTests(unittest.TestCase):
         )))
         self.assertEqual(frames, [[("CIRCLE", 1.0, -2.0, 3.0), ("RECTANGLE", 4.0, 5.0, 0.5, 2.0)], []])
 
+    def test_rectangle_rotation(self):
+        frames = list(read_frames(io.StringIO(
+            "FRAME\nRECTANGLE 0 0 2 1 0 -1\nEND\n"
+        )))
+        self.assertEqual(frames, [[("RECTANGLE", 0.0, 0.0, 2.0, 1.0, 0.0, -1.0)]])
+
     def test_invalid_streams(self):
         for stream in (
             "CIRCLE 1 2 3\n", "END\n", "FRAME\nFRAME\n", "FRAME\nCIRCLE 1 2\nEND\n",
@@ -21,6 +27,8 @@ class ProtocolTests(unittest.TestCase):
             "FRAME\nRECTANGLE 1 2 3\nEND\n", "FRAME\nRECTANGLE 1 2 -3 4\nEND\n",
             "FRAME\nRECTANGLE 1 2 3 -4\nEND\n", "FRAME\nRECTANGLE 1 2 3 inf\nEND\n",
             "FRAME\nTRIANGLE 1 2 3\nEND\n", "FRAME\nCIRCLE 1 2 3 4\nEND\n",
+            "FRAME\nRECTANGLE 0 0 1 2 0\nEND\n",
+            "FRAME\nRECTANGLE 0 0 1 2 nan 1\nEND\n",
         ):
             with self.subTest(stream=stream), self.assertRaises(ValueError):
                 list(read_frames(io.StringIO(stream)))
@@ -39,8 +47,22 @@ class RenderingTests(unittest.TestCase):
         ])
         self.assertEqual(screen.get_at((419, 100))[:3], (130, 210, 160))
         self.assertEqual(screen.get_at((440, 50))[:3], (130, 210, 160))
-        self.assertEqual(screen.get_at((479, 69))[:3], (130, 210, 160))
+        self.assertEqual(screen.get_at((480, 70))[:3], (130, 210, 160))
         self.assertEqual(screen.get_at((460, 60))[:3], (24, 26, 32))
+
+
+    def test_rotated_rectangle_outline(self):
+        try:
+            import pygame
+        except ImportError:
+            self.skipTest("Install viewer requirements for rendering tests")
+        screen = pygame.Surface((800, 600))
+        draw_frame(pygame, screen, [("RECTANGLE", 0.0, 0.0, 2.0, 1.0, 0.0, 1.0)])
+        color = (130, 210, 160)
+        self.assertEqual(screen.get_at((400, 60))[:3], color)
+        self.assertEqual(screen.get_at((420, 100))[:3], color)
+        self.assertEqual(screen.get_at((440, 90))[:3], (24, 26, 32))
+        self.assertEqual(screen.get_at((400, 100))[:3], (55, 58, 68))
 
 
 class HandshakeTests(unittest.TestCase):

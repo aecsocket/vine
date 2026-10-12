@@ -10,11 +10,11 @@ pub fn main(&io: &IO) {
   let bodies = [
     // The floor's top surface is at y = -5.
     RigidBody({
-      position: (0.0, -10.0),
-      rotation: Rot2::identity,
+      position: (0.0, -20.0),
+      rotation: Rot2::from_angle(3.1415 / 4.0),
       linear_velocity: (0.0, 0.0),
       angular_velocity: 0.0,
-      collider: Collider::Rectangle({ half_size: (100.0, 5.0) }),
+      collider: Collider::Rectangle({ half_size: (10.0, 10.0) }),
       inverse_mass: 0.0,
       restitution: 0.0,
     }),
@@ -52,7 +52,7 @@ pub fn main(&io: &IO) {
         rotation: Rot2::identity,
         linear_velocity: (0.0, 0.0),
         angular_velocity: 0.0,
-        collider: Collider::Circle({ radius: 1.0 }),
+        collider: Collider::Rectangle({ half_size: (1.0, 1.0) }),
         inverse_mass: 1.0 / 2.0,
         restitution: 0.5,
       }));
@@ -74,7 +74,9 @@ pub fn main(&io: &IO) {
         }
         Collider::Rectangle({ half_size }) {
           let (half_width, half_height) = half_size;
-          io.println("RECTANGLE {x} {y} {half_width} {half_height}");
+          let Rot2(rotation) = body.rotation;
+          let (cos, sin) = rotation.get();
+          io.println("RECTANGLE {x} {y} {half_width} {half_height} {cos} {sin}");
         }
       }
     }
