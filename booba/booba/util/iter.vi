@@ -1,0 +1,61 @@
+use #root::data::Iterator;
+use #root::data::Iterator::Fused;
+
+pub struct Peeking[Iter, T]({
+  iter: Fused[Iter],
+  peek: Option[T],
+});
+
+pub fn .peeking[Iter, T; Iterator[Iter, T]](
+  iter: Iter,
+) -> Peeking[Iter, T] {
+  Peeking({
+    iter: Fused::new(iter),
+    peek: None()
+  })
+}
+
+pub mod Peeking {
+  pub impl [Iter?, T?]: Drop[Peeking[Iter, T]];
+
+  pub fn .next[Iter, T; Iterator[Iter, T]](&Peeking({ iter, peek }): &Peeking[Iter, T]) -> Option[T] {
+    match peek {
+      Some(value) {
+        peek = None();
+        Some(value)
+      }
+      None() {
+        peek = None();
+        iter.next()
+      }
+    }
+  }
+
+  pub fn .peek[Iter, T; Iterator[Iter, T]](&Peeking({ iter, peek }): &Peeking[Iter, T]) -> Option[&T] {
+    match peek {
+      Some(value) {
+        peek = Some(value);
+        peek.as_ref()
+      }
+      None() {
+        peek = iter.next();
+        peek.as_ref()
+      }
+    }
+  }
+
+  pub impl [Iter?, T; Iterator[Iter, T]]: Iterator[Peeking[Iter, T], T] {
+    fn advance(Peeking({ iter, peek }): Peeking[Iter, T]) -> Option[(T, Peeking[Iter, T])] {
+      match peek {
+        Some(value) {
+          Some(value, Peeking({ iter, peek: None() }))
+        }
+        None() {
+          if iter.next() is Some(value) {
+            Some(value, Peeking({ iter, peek: None() }))
+          }
+        }
+      }
+    }
+  }
+}

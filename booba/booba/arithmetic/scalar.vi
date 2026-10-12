@@ -1,6 +1,34 @@
 use #root::ops::arithmetic::{Add, Mul};
 use #root::ops::comparison::Lt;
 
+pub trait[A, B] MinMax[O] {
+  fn .min(a: A, b: B) -> O;
+
+  fn .max(a: A, b: B) -> O;
+}
+
+pub use min_max_lt as _;
+pub impl min_max_lt[A?; Lt[A]]: MinMax[A, A, A] {
+  fn min(a: A, b: A) -> A {
+    if a < b { a } else { b }
+  }
+
+  fn max(a: A, b: A) -> A {
+    if a < b { b } else { a }
+  }
+}
+
+pub use min_max_vec2 as _;
+pub impl min_max_vec2: MinMax[Vec2, Vec2, Vec2] {
+  fn min((x1, y1): Vec2, (x2, y2): Vec2) -> Vec2 {
+    (x1.min(x2), y1.min(y2))
+  }
+
+  fn max((x1, y1): Vec2, (x2, y2): Vec2) -> Vec2 {
+    (x1.max(x2), y1.max(y2))
+  }
+}
+
 pub trait[A] Clamp {
   fn .clamp(value: A, min: A, max: A) -> A;
 }

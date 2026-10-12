@@ -1,6 +1,7 @@
 mod engine;
 mod arithmetic;
 mod contact;
+mod util;
 
 use arithmetic::Rot2;
 use engine::{RigidBody, Engine, Collider};

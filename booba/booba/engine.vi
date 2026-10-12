@@ -24,6 +24,22 @@ pub enum* Collider {
   Rectangle({ half_size: Vec2 }),
 }
 
+pub mod Collider {
+  pub fn .vertices(&collider: &Collider) -> Option[List[Vec2]] {
+    match collider {
+      Collider::Circle({ radius: _ }) { None() }
+      Collider::Rectangle({ half_size: (hx, hy) }) {
+        Some([
+          (-hx,  hy),
+          ( hx,  hy),
+          ( hx, -hy),
+          (-hx, -hy),
+        ])
+      }
+    }
+  }
+}
+
 pub mod Engine {
   pub fn .update(&engine: &Engine, dt: F32) {
     integrate_bodies(&engine, dt);

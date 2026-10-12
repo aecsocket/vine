@@ -1,0 +1,85 @@
+use arithmetic as _;
+use arithmetic::{Vec2, UnitVec2, Rot2};
+use contact::ContactManifold;
+use util::iter::peeking;
+
+pub fn sat(
+  &vertices_a: &List[Vec2],
+  &vertices_b: &List[Vec2],
+) -> Option[ContactManifold] {
+  let first_vertex_a = match vertices_a.pop_front() {
+    Some(vertex) { vertex }
+    None() { return None(); }
+  };
+  vertices_a.push_front(first_vertex_a);
+
+  let first_vertex_b = match vertices_b.pop_front() {
+    Some(vertex) { vertex }
+    None() { return None(); }
+  };
+  vertices_b.push_front(first_vertex_b);
+
+  None()
+}
+
+fn sat_for(
+  &vertices: &List[Vec2],
+  &other_vertices: &List[Vec2],
+) -> Option[ContactManifold] {
+  let first_vertex = match vertices.pop_front() {
+    Some(vertex) { vertex }
+    None() {
+      // this polygon has no vertices; no way there can be a contact
+      return None();
+    }
+  };
+  vertices.push_front(first_vertex);
+
+  let iter = vertices.iter_ref().forked().peeking();
+  while iter.next() is Some(current) {
+    // given a list of vertices [A, B, C, D]
+    // we get the following (current, next) pairs:
+    // - (A, B)
+    // - (B, C)
+    // - (C, D)
+    // - (D, A)
+    // with the way we use `pop_front`, `push_front`, and `first_vertex`,
+    // I *believe* this is the optimal way to read these pairs.
+    let next = iter.peek().as_fork().or_use(first_vertex);
+
+    // `edge` is the face/edge we're currently working on
+    // and `axis` is its normal,
+    // using which we're gonna project a bunch of vertices
+    let (edge_x, edge_y) = next - current;
+    let (axis_x, axis_y) = (-edge_y, edge_x);
+
+    if axis_x == 0.0 and axis_y == 0.0 {
+      // 2 duplicate points, we should have handled this last iteration
+      continue;
+    }
+    let axis = (axis_x, axis_y);
+
+    let (min_a, max_a) = project(&vertices, axis);
+    let (min_b, max_b) = project(&other_vertices, axis);
+
+    if max_a < min_b or max_b < min_a {
+      // separating!
+      return None();
+    }
+  }
+
+  None()
+}
+
+fn project(&vertices: &List[Vec2], axis: Vec2) -> Vec2 {
+  let min = F32::inf;
+  let max = F32::neg_inf;
+
+  for vertex in vertices {
+    let p = vertex.dot(axis);
+    min = min.min(p);
+    max = max.max(p);
+  }
+
+  (min, max)
+}

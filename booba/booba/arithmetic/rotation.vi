@@ -6,7 +6,7 @@ use #root::ops::arithmetic::Mul;
 pub struct* Rot2(pub UnitVec2);
 
 pub mod Rot2 {
-  pub const IDENTITY: Rot2 = Rot2(UnitVec2::X);
+  pub const IDENTITY: Rot2 = Rot2(UnitVec2::x);
 
   pub fn new_unchecked(cos: F32, sin: F32) -> Rot2 {
     Rot2(UnitVec2::new_unchecked((cos, sin)))

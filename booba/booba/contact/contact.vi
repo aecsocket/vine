@@ -1,3 +1,5 @@
+mod sat;
+
 use engine::{RigidBody, Collider};
 use arithmetic as _;
 use arithmetic::{Vec2, UnitVec2, Rot2};
@@ -155,7 +157,7 @@ fn contact_circle_circle(
   }
 
   Some(ContactManifold({
-    normal: position_b.normalize().or_use(UnitVec2::X),
+    normal: position_b.normalize().or_use(UnitVec2::x),
     point1: ContactPoint({
       position: position_b * 0.5,
       depth: radius_a + radius_b - distance,
@@ -194,10 +196,10 @@ fn contact_rectangle_circle(
       let normal;
       let face_distance;
       if dist_x <= dist_y {
-        normal = if cx >= 0.0 { UnitVec2::X } else { UnitVec2::NEG_X };
+        normal = if cx >= 0.0 { UnitVec2::x } else { UnitVec2::nx };
         face_distance = dist_x;
       } else {
-        normal = if cy >= 0.0 { UnitVec2::Y } else { UnitVec2::NEG_Y };
+        normal = if cy >= 0.0 { UnitVec2::y } else { UnitVec2::ny };
         face_distance = dist_y;
       }
 

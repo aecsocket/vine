@@ -6,10 +6,10 @@ use #root::ops::elementwise as _;
 pub struct* UnitVec2(Vec2);
 
 pub mod UnitVec2 {
-  pub const X: UnitVec2 = UnitVec2((1.0, 0.0));
-  pub const NEG_X: UnitVec2 = UnitVec2((-1.0, 0.0));
-  pub const Y: UnitVec2 = UnitVec2((0.0, 1.0));
-  pub const NEG_Y: UnitVec2 = UnitVec2((0.0, -1.0));
+  pub const x: UnitVec2 = UnitVec2((1.0, 0.0));
+  pub const nx: UnitVec2 = UnitVec2((-1.0, 0.0));
+  pub const y: UnitVec2 = UnitVec2((0.0, 1.0));
+  pub const ny: UnitVec2 = UnitVec2((0.0, -1.0));
 
   pub fn new_unchecked(vec: Vec2) -> UnitVec2 {
     UnitVec2(vec)
