@@ -33,26 +33,33 @@ pub mod Engine {
 
 fn resolve_all_contacts(&engine: &Engine) {
   // TODO: replace with a real broadphase
-  for (i, body_a) in engine.bodies.iter_ref().enumerate() {
-    // this skips:
-    // - the pair where body_a = body_b
-    // - the reverse pair, like if we previous did (a, b)
-    //   then we won't do (b, a) cause that's pointless
-    for body_b in engine.bodies.iter_ref().skip(i + 1) {
-      contact::resolve_contacts(body_a, body_b);
+
+  let bodies = engine.bodies;
+  let processed = [];
+
+  while bodies.head_tail() is Some((body_a, tail)) {
+    for body_b in &tail {
+      contact::resolve_contacts(&body_a, body_b);
     }
+
+    processed.push_back(body_a);
+    bodies = tail;
   }
+
+  engine.bodies = processed;
 }
 
 fn integrate_bodies(&engine: &Engine, dt: F32) {
   for &body in &engine.bodies {
-    if body.inverse_mass > 0.0 {
-      body.linear_velocity += engine.gravity * dt;
-      body.position += body.linear_velocity * dt;
-
-      let delta_angle = body.angular_velocity * dt;
-      let delta_rotation = Rot2::from_angle(delta_angle);
-      body.rotation = delta_rotation * body.rotation;
+    if body.inverse_mass <= 0.0 {
+      continue;
     }
+
+    body.linear_velocity += engine.gravity * dt;
+    body.position += body.linear_velocity * dt;
+
+    let delta_angle = body.angular_velocity * dt;
+    let delta_rotation = Rot2::from_angle(delta_angle);
+    body.rotation = delta_rotation * body.rotation;
   }
 }

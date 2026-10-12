@@ -169,7 +169,7 @@ def main():
                 displayed += 1
             draw_frame(pygame, screen, bodies)
             pygame.display.flip()
-            clock.tick(60)
+            clock.tick(30)
             if args.frames is not None and displayed >= args.frames:
                 return 0
             if not waiting and (not paused or single_step):

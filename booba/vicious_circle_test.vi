@@ -1,20 +1,6 @@
-struct* Foo(N32);
-
 pub fn main(&io: &IO) {
-  let list = [Foo(0), Foo(1), Foo(2)];
-
-  for (i, num1) in list.iter_ref().enumerate() {
-    for num2 in list.iter_ref().skip(i + 1) {
-      bar(&io, num1, num2);
-    }
-  }
-}
-
-fn bar(&io: &IO, &Foo(a): &Foo, &Foo(b): &Foo) {
-  let old_a = a;
-  let old_b = b;
-  a = old_a + old_b;
-  b = old_a + old_b;
-
-  io.println("a = {a} / b = {b}");
+  let a: ~String;
+  let b = ~a;
+  ~a = b;
+  io.println(b);
 }
