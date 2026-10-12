@@ -7,33 +7,61 @@ pub fn sat(
   &vertices_a: &List[Vec2],
   &vertices_b: &List[Vec2],
 ) -> Option[ContactManifold] {
-  let first_vertex_a = match vertices_a.pop_front() {
-    Some(vertex) { vertex }
+  let face_a = match find_face(&vertices_a, &vertices_b) {
+    Some(face) { face },
     None() { return None(); }
   };
-  vertices_a.push_front(first_vertex_a);
+  let face_b = match find_face(&vertices_b, &vertices_a) {
+    Some(face) { face },
+    None() { return None(); }
+  };
+  // overlapping!
 
-  let first_vertex_b = match vertices_b.pop_front() {
-    Some(vertex) { vertex }
-    None() { return None(); }
-  };
-  vertices_b.push_front(first_vertex_b);
+  if face_a.separation >= face_b.separation {
+
+  }
+
 
   None()
 }
 
-fn sat_for(
+struct* Face({
+  start: Vec2,
+  end: Vec2,
+  normal: UnitVec2,
+  separation: F32,
+});
+
+fn find_face(
   &vertices: &List[Vec2],
   &other_vertices: &List[Vec2],
-) -> Option[ContactManifold] {
+) -> Option[Face] {
   let first_vertex = match vertices.pop_front() {
     Some(vertex) { vertex }
     None() {
-      // this polygon has no vertices; no way there can be a contact
+      // this polygon has no vertices; no way there can be a contact,
+      // so they must be separating
       return None();
     }
   };
   vertices.push_front(first_vertex);
+
+  // SAT tells us whether two polygons are overlapping or not,
+  // but we also need to know how far into each other they're overlapping.
+  // so we keep track of the face in this polygon which is the MOST separated
+  // from the other polygon.
+  //
+  // why do we keep track of the most separated one?
+  // well, if a face *is* overlapping, then its separation will be negative -
+  // that is, it won't be separated, but rather overlapping.
+  // out of all the faces that are overlapping, we want to find the one
+  // which is overlapping the *least* - that's the face with the
+  // *shallowest penetration* between the two polygons, and the one with the
+  // highest separation, so the shallowest penetration.
+  // we choose the shallowest penetration one, because we need to move the
+  // bodies the *least* along that face normal to separate the two.
+  // ideally, we resolve the contact with the least displacement.
+  let most_separated_face = None[Face]();
 
   let iter = vertices.iter_ref().forked().peeking();
   while iter.next() is Some(current) {
@@ -51,29 +79,55 @@ fn sat_for(
     // and `axis` is its normal,
     // using which we're gonna project a bunch of vertices
     let (edge_x, edge_y) = next - current;
-    let (axis_x, axis_y) = (-edge_y, edge_x);
-
-    if axis_x == 0.0 and axis_y == 0.0 {
-      // 2 duplicate points, we should have handled this last iteration
-      continue;
+    let normal = match (edge_y, -edge_x).normalize() {
+      Some(normal) { normal },
+      None() {
+        // edge_y, edge_x are zero or close to zero;
+        // likely `edge` is a duplicate of the last point,
+        // so we should have handled this on the last iteration.
+        // ignored!
+        continue;
+      }
     }
-    let axis = (axis_x, axis_y);
 
-    let (min_a, max_a) = project(&vertices, axis);
-    let (min_b, max_b) = project(&other_vertices, axis);
-
-    if max_a < min_b or max_b < min_a {
-      // separating!
+    // project polygon B's vertices onto the face
+    // of polygon A that we're looking at rn
+    let (other_min, _) = project(&other_vertices, normal);
+    let separation = other_min - current.dot(normal.get());
+    if separation > 0.0 {
+      // you're never gonna believe this, but the polygons
+      // are separated...
       return None();
     }
+
+    // so we know these two polygons are NOT separated
+    let face = Face({
+      start: current,
+      end: next,
+      normal: normal,
+      separation: separation,
+    });
+
+    most_separated_face = match most_separated_face {
+      None() { Some(face) }
+      Some(last) {
+        if separation > last.separation {
+          // we've found a new face which is the most separated so far
+          Some(face)
+        } else {
+          Some(last)
+        }
+      }
+    };
   }
 
-  None()
+  most_separated_face
 }
 
-fn project(&vertices: &List[Vec2], axis: Vec2) -> Vec2 {
+fn project(&vertices: &List[Vec2], axis: UnitVec2) -> Vec2 {
   let min = F32::inf;
   let max = F32::neg_inf;
+  let axis = axis.get();
 
   for vertex in vertices {
     let p = vertex.dot(axis);

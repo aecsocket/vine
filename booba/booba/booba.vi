@@ -11,7 +11,7 @@ pub fn main(&io: &IO) {
     // The floor's top surface is at y = -5.
     RigidBody({
       position: (0.0, -10.0),
-      rotation: Rot2::IDENTITY,
+      rotation: Rot2::identity,
       linear_velocity: (0.0, 0.0),
       angular_velocity: 0.0,
       collider: Collider::Rectangle({ half_size: (100.0, 5.0) }),
@@ -20,7 +20,7 @@ pub fn main(&io: &IO) {
     }),
     RigidBody({
       position: (-20.0, 10.0),
-      rotation: Rot2::IDENTITY,
+      rotation: Rot2::identity,
       linear_velocity: (0.0, 0.0),
       angular_velocity: 0.0,
       collider: Collider::Rectangle({ half_size: (5.0, 100.0) }),
@@ -29,7 +29,7 @@ pub fn main(&io: &IO) {
     }),
     RigidBody({
       position: (20.0, 10.0),
-      rotation: Rot2::IDENTITY,
+      rotation: Rot2::identity,
       linear_velocity: (0.0, 0.0),
       angular_velocity: 0.0,
       collider: Collider::Rectangle({ half_size: (5.0, 100.0) }),
@@ -49,7 +49,7 @@ pub fn main(&io: &IO) {
           (column as F32 - (count - 1) as F32 * 0.5) * spacing,
           -3.95 + row as F32 * row_height,
         ),
-        rotation: Rot2::IDENTITY,
+        rotation: Rot2::identity,
         linear_velocity: (0.0, 0.0),
         angular_velocity: 0.0,
         collider: Collider::Circle({ radius: 1.0 }),

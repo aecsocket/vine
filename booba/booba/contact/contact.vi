@@ -115,9 +115,11 @@ fn find_contacts(
       })
     }
     (
-      Collider::Rectangle(_),
-      Collider::Rectangle(_),
-    ) { None() /* todo */ }
+      Collider::Rectangle({ half_size: (hx_a_x, hx_a_y) }),
+      Collider::Rectangle({ half_size: (hx_b_x, hx_b_y) }),
+    ) {
+      let
+    }
   }
 }
 
@@ -225,3 +227,21 @@ fn contact_rectangle_circle(
     point2: None(),
   }))
 }
+//
+// /// Get the list of discrete vertices in a collider, assuming its origin
+// // is `(0, 0)` and has no rotation.
+// //
+// // Circles return `None()`.
+// pub fn vertices_for(&collider: &Collider) -> Option[List[Vec2]] {
+//   match collider {
+//     Collider::Circle({ radius: _ }) { None() }
+//     Collider::Rectangle({ half_size: (hx, hy) }) {
+//       Some([
+//         (-hx,  hy),
+//         ( hx,  hy),
+//         ( hx, -hy),
+//         (-hx, -hy),
+//       ])
+//     }
+//   }
+// }
