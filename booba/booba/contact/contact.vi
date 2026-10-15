@@ -32,24 +32,20 @@ pub fn resolve_contacts(
     return;
   }
 
-  // how quickly is A approaching B, *along the collision normal*?
-  let relative_velocity = body_b.linear_velocity - body_a.linear_velocity;
-  let normal_velocity = relative_velocity.dot(contact.normal.get());
+  let inertia_a = inverse_inertia(&body_a);
+  let inertia_b = inverse_inertia(&body_b);
+  let normal = contact.normal.get();
+  let constraints = [make_constraint(&body_a, &body_b, contact.point1.position, normal, restitution)];
+  if contact.point2 is Some(point) {
+    constraints.push_back(make_constraint(&body_a, &body_b, point.position, normal, restitution));
+  }
 
-  if normal_velocity < 0.0 {
-    // A and B are approaching, so we want to apply impulses to push them away.
-    // this part is physically correct, if simplistic.
-    // if normal_velocity > 0, they'd be separating, so do nothing.
-
-    // compute what impulse (instantaneous change in acceleration)
-    // we want to appply to our bodies
-    let magnitude = -(1.0 + restitution) * normal_velocity / inverse_mass_sum;
-    let impulse = contact.normal.get() * magnitude;
-
-    // ..and actually apply it to the bodies
-    // F = ma => a = F/m => a = F*(1/m) => F * inverse_mass
-    body_b.linear_velocity += impulse * body_b.inverse_mass;
-    body_a.linear_velocity -= impulse * body_a.inverse_mass;
+  // Coupled contacts need multiple passes; accumulated impulses prevent pulling
+  // bodies together and allow later passes to undo an excessive earlier impulse.
+  for _ in 0..8 {
+    for &constraint in &constraints {
+      solve_constraint(&body_a, &body_b, &constraint, normal, inertia_a, inertia_b);
+    }
   }
 
   // separately from velocity, we want to push them apart *right now*
@@ -65,6 +61,76 @@ pub fn resolve_contacts(
   let correction = contact.normal.get() * (0.8 * depth / inverse_mass_sum);
   body_b.position += correction * body_b.inverse_mass;
   body_a.position -= correction * body_a.inverse_mass;
+}
+
+struct* ContactConstraint({
+  offset_a: Vec2,
+  offset_b: Vec2,
+  target_velocity: F32,
+  impulse: F32,
+});
+
+fn cross((ax, ay): Vec2, (bx, by): Vec2) -> F32 {
+  ax * by - ay * bx
+}
+
+fn point_velocity(&body: &RigidBody, (x, y): Vec2) -> Vec2 {
+  body.linear_velocity + (-y, x) * body.angular_velocity
+}
+
+// Uniform solid disk/rectangle inertia. Zero inverse mass denotes a static body.
+fn inverse_inertia(&body: &RigidBody) -> F32 {
+  if body.inverse_mass <= 0.0 { return 0.0; }
+  let inertia_per_mass = match body.collider {
+    Collider::Circle({ radius }) { radius * radius * 0.5 }
+    Collider::Rectangle({ half_size: (x, y) }) { (x * x + y * y) / 3.0 }
+  };
+  if inertia_per_mass > 0.0 { body.inverse_mass / inertia_per_mass } else { 0.0 }
+}
+
+fn make_constraint(
+  &body_a: &RigidBody,
+  &body_b: &RigidBody,
+  local_point: Vec2,
+  normal: Vec2,
+  restitution: F32,
+) -> ContactConstraint {
+  let world_point = body_a.rotation * local_point + body_a.position;
+  let offset_a = world_point - body_a.position;
+  let offset_b = world_point - body_b.position;
+  let velocity = (point_velocity(&body_b, offset_b) - point_velocity(&body_a, offset_a)).dot(normal);
+  ContactConstraint({
+    offset_a: offset_a,
+    offset_b: offset_b,
+    // Don't bounce resting contacts from tiny gravity-induced approach speeds.
+    target_velocity: if velocity < -1.0 { -restitution * velocity } else { 0.0 },
+    impulse: 0.0,
+  })
+}
+
+fn solve_constraint(
+  &body_a: &RigidBody,
+  &body_b: &RigidBody,
+  &constraint: &ContactConstraint,
+  normal: Vec2,
+  inertia_a: F32,
+  inertia_b: F32,
+) {
+  let arm_a = cross(constraint.offset_a, normal);
+  let arm_b = cross(constraint.offset_b, normal);
+  let effective_inverse_mass = body_a.inverse_mass + body_b.inverse_mass
+    + arm_a * arm_a * inertia_a + arm_b * arm_b * inertia_b;
+  if effective_inverse_mass <= 0.0 { return; }
+  let velocity = (point_velocity(&body_b, constraint.offset_b)
+    - point_velocity(&body_a, constraint.offset_a)).dot(normal);
+  let previous = constraint.impulse;
+  constraint.impulse = (previous + (constraint.target_velocity - velocity) / effective_inverse_mass).max(0.0);
+  let magnitude = constraint.impulse - previous;
+  let impulse = normal * magnitude;
+  body_a.linear_velocity -= impulse * body_a.inverse_mass;
+  body_b.linear_velocity += impulse * body_b.inverse_mass;
+  body_a.angular_velocity -= arm_a * magnitude * inertia_a;
+  body_b.angular_velocity += arm_b * magnitude * inertia_b;
 }
 
 /// Compute the restitution of two bodies' restitution values.

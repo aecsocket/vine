@@ -10,6 +10,14 @@ import sys
 import threading
 
 
+WINDOW_SIZE = (1600, 1200)
+# WINDOW_SIZE = (800, 600)
+PIXELS_PER_UNIT = 40
+# PIXELS_PER_UNIT = 20
+ORIGIN_Y = 100
+
+
+
 def read_frames(stream):
     bodies = None
     for line_number, line in enumerate(stream, 1):
@@ -45,8 +53,8 @@ def read_frames(stream):
 
 def draw_frame(pygame, screen, bodies):
     screen.fill((24, 26, 32))
-    origin = (screen.get_width() // 2, 100)
-    scale = 20
+    origin = (screen.get_width() // 2, ORIGIN_Y)
+    scale = PIXELS_PER_UNIT
     pygame.draw.line(screen, (55, 58, 68), (0, origin[1]), (screen.get_width(), origin[1]))
     pygame.draw.line(screen, (55, 58, 68), (origin[0], 0), (origin[0], screen.get_height()))
     for shape, x, y, *size in bodies:
@@ -144,7 +152,7 @@ def main():
 
     try:
         pygame.display.init()
-        screen = pygame.display.set_mode((800, 600))
+        screen = pygame.display.set_mode(WINDOW_SIZE)
         clock = pygame.time.Clock()
         bodies = []
         waiting = True

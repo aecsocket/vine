@@ -14,7 +14,7 @@ pub fn main(&io: &IO) {
       rotation: Rot2::from_angle(3.1415 / 4.0),
       linear_velocity: (0.0, 0.0),
       angular_velocity: 0.0,
-      collider: Collider::Rectangle({ half_size: (10.0, 10.0) }),
+      collider: Collider::Circle({ radius: 10.0 }),
       inverse_mass: 0.0,
       restitution: 0.0,
     }),
