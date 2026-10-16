@@ -19,7 +19,5 @@ pub use unwrap_vec::*;
 mod exact_size;
 pub use exact_size::*;
 
-#[cfg(feature = "std")]
 mod ensure_sufficient_stack;
-#[cfg(feature = "std")]
 pub use ensure_sufficient_stack::*;

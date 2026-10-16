@@ -8,7 +8,6 @@ extern crate alloc;
 extern crate std;
 
 pub mod host;
-#[cfg(feature = "std")]
 pub mod program;
 pub mod runtime;
 pub mod system;

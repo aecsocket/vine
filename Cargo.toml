@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cli", "ivm", "ivy", "lsp", "util", "vine"]
+members = ["cli", "ivm", "ivmetal", "ivy", "lsp", "util", "vine"]
 
 [profile.release]
 opt-level = 3
