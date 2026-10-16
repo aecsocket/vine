@@ -1,5 +1,6 @@
 use alloc::{boxed::Box, collections::BTreeMap, format, string::String, vec::Vec};
-use core::{convert::Infallible, fmt};
+use core::convert::Infallible;
+use derive_more::{Display, Error};
 use hashbrown::{HashMap, hash_map::Entry};
 
 use vine_util::{idx::Counter, lexer::TokenSet};
@@ -31,14 +32,21 @@ pub enum Expr<I = Infallible> {
   Subnet(Box<Expr<I>>, Vec<Stmt<I>>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Display, Clone, Error)]
 pub enum Diag {
+  #[display("lexing error")]
   LexError,
+  #[display("expected {expected}; found {found}")]
   UnexpectedToken { expected: TokenSet<Token>, found: Token },
-  InvalidNumber(String),
-  MultipleFree(usize),
-  MissingFree(usize),
-  DisconnectedWire(String),
+  #[display("invalid number `{_0}`")]
+  InvalidNumber(#[error(ignore)] String),
+  #[display("multiple free ports with index `{_0}`")]
+  MultipleFree(#[error(ignore)] usize),
+  #[display("missing free port with index `{_0}`")]
+  MissingFree(#[error(ignore)] usize),
+  #[display("wire `{_0}` is disconnected")]
+  DisconnectedWire(#[error(ignore)] String),
+  #[display("invalid interpolation")]
   InvalidInterpolation,
 }
 
@@ -253,19 +261,5 @@ pub struct WireNames {
 impl WireNames {
   pub fn get(&mut self, wire: Wire) -> String {
     format!("{}", self.wires.entry(wire).or_insert_with(|| self.var.next()))
-  }
-}
-
-impl fmt::Display for Diag {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Diag::LexError => write!(f, "lexing error"),
-      Diag::UnexpectedToken { expected, found } => write!(f, "expected {expected}; found {found}"),
-      Diag::InvalidNumber(n) => write!(f, "invalid number `{n}`"),
-      Diag::MultipleFree(i) => write!(f, "multiple free ports with index `{i}`"),
-      Diag::MissingFree(i) => write!(f, "missing free port with index `{i}`"),
-      Diag::DisconnectedWire(wire) => write!(f, "wire `{wire}` is disconnected"),
-      Diag::InvalidInterpolation => write!(f, "invalid interpolation"),
-    }
   }
 }

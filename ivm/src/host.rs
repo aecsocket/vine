@@ -16,7 +16,7 @@ use crate::{
 };
 
 pub mod ext;
-#[cfg(feature = "std")]
+// #[cfg(feature = "std")]
 pub mod runner;
 
 pub struct IVM<'ivm> {
