@@ -1,8 +1,9 @@
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use std::{
   format,
   fs::{File, OpenOptions},
   io::{self, ErrorKind, Read, Write},
+  sync::{Mutex, MutexGuard},
 };
 
 use vine_util::register::Register;
@@ -11,7 +12,7 @@ use crate::{
   host::{
     Host,
     ext::{
-      ExtFn, ExtTyBoxed, ExtTyRegister, Invalid,
+      self, ExtFn, ExtTyBoxed, ExtTyRegister, Invalid,
       common::{List, Nil},
     },
   },
@@ -41,6 +42,7 @@ pub fn io_args<'ivm>(args: &'ivm [String]) -> impl Register<Host<'ivm>> {
   ExtFn("root:io:args", |IO| (List(args.iter().map(|str| List(str.chars()))), IO))
 }
 
+#[derive(Default)]
 pub struct IO;
 
 impl<'ivm> ExtTyRegister<'ivm> for IO {
@@ -197,4 +199,38 @@ fn read_bytes_into_char<R: Read>(
   buf[0] = first_byte;
 
   Ok((n, str::from_utf8(buf).ok().and_then(|s| s.chars().next())))
+}
+
+#[derive(Default)]
+pub struct CaptureOutput {
+  pub output: Mutex<Vec<u8>>,
+}
+
+impl CaptureOutput {
+  pub fn extrinsics<'a: 'ivm, 'b: 'ivm, 'ivm>(
+    &'a self,
+    args: &'b [String],
+  ) -> impl Register<Host<'ivm>> {
+    (
+      ext::common::all(),
+      ext::platform::all(args, || &[][..], || SharedWriter(self.output.lock().unwrap())),
+    )
+  }
+
+  pub fn into_output(self) -> Vec<u8> {
+    self.output.into_inner().unwrap()
+  }
+}
+
+struct SharedWriter<'a>(MutexGuard<'a, Vec<u8>>);
+
+impl Write for SharedWriter<'_> {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    self.0.extend_from_slice(buf);
+    Ok(buf.len())
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    Ok(())
+  }
 }

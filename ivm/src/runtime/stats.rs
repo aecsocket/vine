@@ -5,6 +5,8 @@ use core::{
   time::Duration,
 };
 
+use vine_util::arithmetic::{log10_f64, round_f64};
+
 /// Statistics about the execution of an IVM.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Stats {
@@ -65,7 +67,8 @@ impl Stats {
   }
 
   pub fn speedup(&self) -> u64 {
-    ((self.interactions() as f64 / self.depth as f64).log10() * 100.0).round() as u64
+    let x = self.interactions() as f64 / self.depth as f64;
+    round_f64(log10_f64(x) * 100.0) as u64
   }
 
   pub fn clear_perf(&mut self) {

@@ -5,8 +5,12 @@ use core::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use ivm::{
-  host::{Host, IVM, ext::common, runner::Runner},
-  runtime::{NoopHooks, heap::Heap},
+  host::{
+    Host, IVM,
+    ext::{ExtTyRegister, common},
+    runner::Runner,
+  },
+  runtime::{NoopHooks, ext::ExtTyCastStatic, heap::Heap, word::Word},
 };
 use log::{error, info};
 use uefi::prelude::*;
@@ -33,22 +37,40 @@ fn run() -> Result<()> {
   let src_contents = include_str!("hi.iv");
   let table = &mut ivy::name::Table::default();
   let nets = ivy::text::parser::Parser::parse(table, &src_contents).context("parsing program")?;
-  let nets = nets.to_flat_nets().context("creating flat nets");
+  let nets = nets.to_flat_nets().context("creating flat nets")?;
 
   // setup copied from `RunArgs::run`
-  let heap = Heap::new();
+  let mut heap = Heap::new();
   let mut ivm = IVM::new();
   let mut host = Host::new(&mut ivm);
-  let extrinsics = (common::all());
-  // let runner = Runner::new(&mut heap, &mut host, extrinsics, table, nets);
+  let extrinsics = common::all();
+  let runner = Runner::<IO>::new(&mut heap, &mut host, extrinsics, table, &nets);
 
-  let mut runtime = host.init(&mut heap);
-  runtime.normalize(hooks);
-
+  // TODO: `workers` shouldn't be a property in `runtime`?
+  // since it's specific to std runtimes.
   let breadth_first = false;
   let workers = 0;
 
   let (mut stats, flags) = runner.normalize(breadth_first, workers, NoopHooks);
   ensure!(flags.success(), "{}", flags.error_message(false));
   Ok(())
+}
+
+#[derive(Default)]
+struct IO;
+
+impl<'ivm> ExtTyRegister<'ivm> for IO {
+  type With<'x> = IO;
+}
+
+impl<'ivm> ExtTyCastStatic<'ivm> for IO {
+  const COPY: bool = false;
+
+  fn into_payload_static(_: IO) -> Word {
+    Word::from_bits(0)
+  }
+
+  unsafe fn from_payload_static(_: Word) -> Self {
+    IO
+  }
 }

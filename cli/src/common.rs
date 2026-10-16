@@ -5,8 +5,11 @@ use hashbrown::HashMap;
 use ivm::{
   host::{
     Host, IVM,
-    ext::{common, platform},
-    runner::{CaptureOutput, Runner},
+    ext::{
+      common,
+      platform::{self, CaptureOutput},
+    },
+    runner::Runner,
   },
   runtime::{StdHooks, flags::Flags, heap::Heap, stats::Stats},
 };
@@ -37,7 +40,7 @@ impl RunArgs {
     let mut ivm = IVM::new();
     let mut host = Host::new(&mut ivm);
     let extrinsics = (common::all(), platform::all(&self.args, io::stdin, io::stdout));
-    let runner = Runner::new(&mut heap, &mut host, extrinsics, table, nets);
+    let runner: Runner = Runner::new(&mut heap, &mut host, extrinsics, table, nets);
 
     let (mut stats, flags) = runner.normalize(self.breadth_first, self.workers, StdHooks);
 
@@ -70,7 +73,7 @@ impl RunArgs {
     let (stats, flags) = {
       let mut host = Host::new(&mut ivm);
       let extrinsics = capture.extrinsics(&self.args);
-      let runner = Runner::new(&mut heap, &mut host, extrinsics, table, nets);
+      let runner: Runner = Runner::new(&mut heap, &mut host, extrinsics, table, nets);
 
       runner.normalize(self.breadth_first, self.workers, StdHooks)
     };

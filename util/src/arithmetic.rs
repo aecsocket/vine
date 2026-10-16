@@ -108,8 +108,8 @@ where
       Fn("vi:f32:sub", |(a, b): (f32, f32)| a - b),
       Fn("vi:f32:mul", |(a, b): (f32, f32)| a * b),
       Fn("vi:f32:div", |(a, b): (f32, f32)| a / b),
-      Fn("vi:f32:rem", |(a, b): (f32, f32)| a.rem_euclid(b)),
-      Fn("vi:f32:sqrt", |a: f32| a.sqrt()),
+      Fn("vi:f32:rem", |(a, b): (f32, f32)| rem_euclid_f32(a, b)),
+      Fn("vi:f32:sqrt", |a: f32| sqrt_f32(a)),
     ),
     (
       Fn("vi:f32:eq", |(a, b): (f32, f32)| a == b),
@@ -148,8 +148,8 @@ where
       Fn("vi:f64:sub", |(a, b): (f64, f64)| a - b),
       Fn("vi:f64:mul", |(a, b): (f64, f64)| a * b),
       Fn("vi:f64:div", |(a, b): (f64, f64)| a / b),
-      Fn("vi:f64:rem", |(a, b): (f64, f64)| a.rem_euclid(b)),
-      Fn("vi:f64:sqrt", |a: f64| a.sqrt()),
+      Fn("vi:f64:rem", |(a, b): (f64, f64)| rem_euclid_f64(a, b)),
+      Fn("vi:f64:sqrt", |a: f64| sqrt_f64(a)),
     ),
     (
       Fn("vi:f64:eq", |(a, b): (f64, f64)| a == b),
@@ -173,4 +173,72 @@ where
       Fn("vi:f64:from_bits", move |(lo, hi): (u32, u32)| f64::from_bits(u64_from_parts(lo, hi))),
     ),
   )
+}
+
+fn rem_euclid_f32(a: f32, b: f32) -> f32 {
+  #[cfg(feature = "std")]
+  {
+    a.rem_euclid(b)
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    let r = a % b;
+    if r < 0.0 { r + b.abs() } else { r }
+  }
+}
+
+fn rem_euclid_f64(a: f64, b: f64) -> f64 {
+  #[cfg(feature = "std")]
+  {
+    a.rem_euclid(b)
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    let r = a % b;
+    if r < 0.0 { r + b.abs() } else { r }
+  }
+}
+
+fn sqrt_f32(a: f32) -> f32 {
+  #[cfg(feature = "std")]
+  {
+    a.sqrt()
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    libm::sqrtf(a)
+  }
+}
+
+fn sqrt_f64(a: f64) -> f64 {
+  #[cfg(feature = "std")]
+  {
+    a.sqrt()
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    libm::sqrt(a)
+  }
+}
+
+pub fn log10_f64(a: f64) -> f64 {
+  #[cfg(feature = "std")]
+  {
+    a.log10()
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    libm::log10(a)
+  }
+}
+
+pub fn round_f64(a: f64) -> f64 {
+  #[cfg(feature = "std")]
+  {
+    a.round()
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    libm::round(a)
+  }
 }

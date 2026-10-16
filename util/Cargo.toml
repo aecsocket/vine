@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 hashbrown = "0.14.5"
-nohash-hasher = "0.2.0"
-slab = "0.4.12"
+nohash-hasher = { version = "0.2.0", default-features = false }
+slab = { version = "0.4.12", default-features = false }
 stacker = { version = "0.1.24", optional = true }
+libm = { version = "0.2.16" }
 
 [lints.clippy]
 absolute_paths = "warn"

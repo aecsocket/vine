@@ -8,5 +8,5 @@ ivy = { path = "../ivy", default-features = false }
 ivm = { path = "../ivm", default-features = false }
 vine-util = { path = "../util", default-features = false }
 uefi = { version = "0.41.0", features = ["alloc", "global_allocator", "logger", "panic_handler"] }
-log = { version = "0.4.34" }
-anyhow = { version = "1.0.104" }
+log = { version = "0.4.34", default-features = false }
+anyhow = { version = "1.0.104", default-features = false }
