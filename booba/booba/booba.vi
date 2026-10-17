@@ -65,33 +65,43 @@ pub fn main(&io: &IO) {
   });
 
   while io.forever() {
-    io.println("FRAME");
+    //io.println("FRAME");
     for body in engine.bodies {
       let (x, y) = body.position;
       match body.collider {
         Collider::Circle({ radius }) {
-          io.println("CIRCLE {x} {y} {radius}");
+          safe $ivy {
+            ${io} = vi:ext#4[physics:io:draw_circle](
+              ${x}
+              ${y}
+              ${radius}
+              ${~io}
+            )
+          };
+          //io.println("CIRCLE {x} {y} {radius}");
         }
         Collider::Rectangle({ half_size }) {
           let (half_width, half_height) = half_size;
           let Rot2(rotation) = body.rotation;
           let (cos, sin) = rotation.get();
-          io.println("RECTANGLE {x} {y} {half_width} {half_height} {cos} {sin}");
+
+          safe $ivy {
+            ${io} = vi:ext#5[physics:io:draw_rectangle](
+              ${x}
+              ${y}
+              ${half_width}
+              ${half_height}
+              ${~io}
+            )
+          };
+          //io.println("RECTANGLE {x} {y} {half_width} {half_height} {cos} {sin}");
         }
       }
     }
-    io.println("END");
-    io.flush();
+    //io.println("END");
+    //io.flush();
+
     engine.update(1.0 / 60.0);
+    safe $ivy { ${io} = vi:ext#1[physics:io:clear_display](${~io}) };
   }
-
-
-
-//    match io.read_line() {
-//      Some(_) {
-//        engine.update(1.0 / 60.0);
-//        continue;
-//      }
-//      None() { break; }
-//    }
 }
