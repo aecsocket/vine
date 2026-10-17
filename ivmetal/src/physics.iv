@@ -3522,13 +3522,13 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
           ivm:branch[:root::data::List::Iter::advance#3, :root::data::List::Iter::advance#2]
           ivm:x(16 ivm:x(17 ivm:x(18 ivm:x(ivm:ext:merge[ivm:branch](
             ivm:branch[:booba::main#17, :booba::main#18]
-            ivm:x(ivm:x(0 ivm:ext:split[physics:io:clear_display](ivm:ext:split[vi:io:ready](ivm:ext:merge[ivm:branch](
+            ivm:x(ivm:x(0 ivm:ext:split[physics:io:present](ivm:ext:split[physics:io:clear_display](ivm:ext:split[vi:io:ready](ivm:ext:merge[ivm:branch](
               ivm:branch[:booba::main#13, :booba::main#12]
               ivm:x(
                 ivm:x(19 1)
                 ivm:x(12 14)
               )
-            ) 19) ivm:eraser)) 20)
+            ) 19) ivm:eraser) ivm:eraser)) 20)
           ) 20))))
         )))
         ivm:x(17 18)

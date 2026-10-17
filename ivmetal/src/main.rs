@@ -29,8 +29,6 @@ use vine_util::register::Register;
 
 use crate::graphics::GopDisplay;
 
-/// Single-threaded UEFI app, so a `RefCell` global is fine; `GopDisplay` is
-/// only `Send`-able by fiat since nothing else touches the framebuffer.
 struct Global<T>(RefCell<T>);
 unsafe impl<T> Sync for Global<T> {}
 
@@ -136,11 +134,15 @@ fn io_stdio<'ivm>() -> impl Register<Host<'ivm>> {
       DISPLAY.0.borrow_mut().as_mut().unwrap().clear(Rgb888::BLACK);
       IO
     }),
+    ExtFn("physics:io:present", move |IO| -> IO {
+      DISPLAY.0.borrow_mut().as_mut().unwrap().present();
+      IO
+    }),
   )
 }
 
-const SCALE: f32 = 8.0;
-const STROKE: u32 = 2;
+const SCALE: f32 = 24.0;
+const STROKE: u32 = 4;
 
 fn io_draw<'ivm>() -> impl Register<Host<'ivm>> {
   (

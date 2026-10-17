@@ -100,6 +100,7 @@ pub fn main(&io: &IO) {
         }
       }
     }
+    safe $ivy { ${io} = vi:ext#1[physics:io:present](${~io}) };
     //io.println("END");
     //io.flush();
 

@@ -1,22 +1,21 @@
 default:
     @just --list
 
-run:
+build:
+    cargo run --manifest-path ../Cargo.toml \
+        --release --bin vine build ../booba/booba \
+        > src/physics.iv
     cargo build --release --package ivmetal --target x86_64-unknown-uefi
+
+run: build
     uefi-run ../target/x86_64-unknown-uefi/release/ivmetal.efi \
         --bios-path /usr/share/edk2/ovmf/OVMF_CODE.fd \
         --boot \
         -- -enable-kvm -cpu host -m 512M -no-reboot
 
 # Run without graphics. Use Ctrl-A, X to close.
-run-no-graphics:
-    cargo build --release --package ivmetal --target x86_64-unknown-uefi
+run-no-graphics: build
     uefi-run ../target/x86_64-unknown-uefi/release/ivmetal.efi \
         --bios-path /usr/share/edk2/ovmf/OVMF_CODE.fd \
         --boot \
         -- -enable-kvm -cpu host -m 3G -nographic -no-reboot
-
-build:
-    cargo run --manifest-path ../Cargo.toml \
-        --release --bin vine build ../booba/booba \
-        > src/physics.iv

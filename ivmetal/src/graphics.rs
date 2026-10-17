@@ -1,8 +1,8 @@
 //! An `embedded-graphics` adapter for the UEFI GOP framebuffer.
 //!
-//! This draws directly into the memory-mapped framebuffer exposed by the
-//! Graphics Output Protocol, so no blitting or double-buffering is involved:
-//! every draw is immediately visible. The adapter supports the direct-access
+//! Drawing updates a RAM backbuffer; `GopDisplay::present` copies a completed
+//! frame into the memory-mapped Graphics Output Protocol framebuffer.
+//! The adapter supports the direct-access
 //! pixel formats (`RGB` and `BGR`); `BitMask`/`BltOnly` framebuffers (where
 //! the CPU cannot meaningfully write pixels) are rejected at construction.
 //!
@@ -13,6 +13,9 @@
 //! the lifetime of the program, so a `GopDisplay` may live arbitrarily long,
 //! but a `GopDisplay` must not be used after `ExitBootServices`.
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::{convert::Infallible, ptr};
 
 use embedded_graphics_core::{
@@ -21,12 +24,15 @@ use embedded_graphics_core::{
   prelude::*,
   primitives::Rectangle,
 };
-use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
+use uefi::{
+  Status,
+  proto::console::gop::{GraphicsOutput, PixelFormat},
+};
 
-/// A direct-write `embedded-graphics` draw target over the GOP framebuffer.
+/// A buffered `embedded-graphics` draw target over the GOP framebuffer.
 pub struct GopDisplay {
   ptr: *mut u8,
-  size: usize,
+  backbuffer: Vec<[u8; 4]>,
   width: usize,
   height: usize,
   stride: usize,
@@ -38,15 +44,30 @@ impl GopDisplay {
   pub fn new(gop: &mut GraphicsOutput) -> uefi::Result<Self> {
     let mode = gop.current_mode_info();
     let (width, height) = mode.resolution();
+    let format = mode.pixel_format();
+    if !matches!(format, PixelFormat::Rgb | PixelFormat::Bgr) {
+      return Err(Status::UNSUPPORTED.into());
+    }
+
+    let stride = mode.stride();
+    let framebuffer_size = stride
+      .checked_mul(height)
+      .and_then(|pixels| pixels.checked_mul(4))
+      .ok_or(uefi::Error::from(Status::BAD_BUFFER_SIZE))?;
+
+    let pixels = width.checked_mul(height).ok_or(uefi::Error::from(Status::OUT_OF_RESOURCES))?;
     let mut fb = gop.frame_buffer();
-    Ok(GopDisplay {
-      ptr: fb.as_mut_ptr(),
-      size: fb.size(),
-      width,
-      height,
-      stride: mode.stride(),
-      format: mode.pixel_format(),
-    })
+    if stride < width || framebuffer_size > fb.size() {
+      return Err(Status::BAD_BUFFER_SIZE.into());
+    }
+
+    let mut backbuffer = Vec::new();
+    backbuffer
+      .try_reserve_exact(pixels)
+      .map_err(|_| uefi::Error::from(Status::OUT_OF_RESOURCES))?;
+    backbuffer.resize(pixels, [0; 4]);
+
+    Ok(GopDisplay { ptr: fb.as_mut_ptr(), backbuffer, width, height, stride, format })
   }
 
   pub fn width(&self) -> usize {
@@ -57,53 +78,55 @@ impl GopDisplay {
     self.height
   }
 
-  /// Writes a single pixel, silently ignoring out-of-bounds coordinates as
-  /// required by `DrawTarget::draw_iter`.
-  fn write_pixel(&mut self, x: usize, y: usize, color: Rgb888) {
-    let Some(offset) = self.pixel_offset(x, y) else { return };
-    let bytes = match self.format {
-      PixelFormat::Bgr => [color.b(), color.g(), color.r(), 0],
-      PixelFormat::Rgb => [color.r(), color.g(), color.b(), 0],
-      // Rejected in `new`; unreachable.
-      PixelFormat::Bitmask | PixelFormat::BltOnly => return,
-    };
-    for (index, byte) in bytes.into_iter().enumerate() {
-      unsafe { ptr::write_volatile(self.ptr.add(offset + index), byte) };
+  /// Copies the completed backbuffer to the display without clearing it.
+  /// GOP provides no vsync, so this copy is not guaranteed to be tear-free.
+  pub fn present(&mut self) {
+    for y in 0..self.height {
+      let row = &self.backbuffer[y * self.width..(y + 1) * self.width];
+      for (x, pixel) in row.iter().enumerate() {
+        // The framebuffer stride is in pixels; the RAM buffer is tightly packed.
+        let offset = (y * self.stride + x) * 4;
+        for (index, &byte) in pixel.iter().enumerate() {
+          // Construction validates the framebuffer size and format.
+          unsafe { ptr::write_volatile(self.ptr.add(offset + index), byte) };
+        }
+      }
     }
   }
 
-  fn pixel_offset(&self, x: usize, y: usize) -> Option<usize> {
-    if x >= self.width || y >= self.height {
-      return None;
+  fn pixel_bytes(&self, color: Rgb888) -> [u8; 4] {
+    match self.format {
+      PixelFormat::Bgr => [color.b(), color.g(), color.r(), 0],
+      PixelFormat::Rgb => [color.r(), color.g(), color.b(), 0],
+      // Rejected in `new`; unreachable.
+      PixelFormat::Bitmask | PixelFormat::BltOnly => unreachable!(),
     }
-    // GOP reports the scanline stride in pixels, not bytes.
-    let offset = (y * self.stride + x) * 4;
-    (offset + 4 <= self.size).then_some(offset)
+  }
+
+  /// Writes to RAM, silently ignoring out-of-bounds coordinates as required
+  /// by `DrawTarget::draw_iter`.
+  fn write_pixel(&mut self, x: usize, y: usize, color: Rgb888) {
+    if x < self.width && y < self.height {
+      self.backbuffer[y * self.width + x] = self.pixel_bytes(color);
+    }
   }
 
   /// Fills a clipped rectangle with a single color.
   fn fill_rect(&mut self, rect: Rectangle, color: Rgb888) {
-    let (r, g, b) = (color.r(), color.g(), color.b());
-    let bytes = match self.format {
-      PixelFormat::Bgr => [b, g, r, 0],
-      PixelFormat::Rgb => [r, g, b, 0],
-      PixelFormat::Bitmask | PixelFormat::BltOnly => return,
-    };
+    let bytes = self.pixel_bytes(color);
     let rect = rect.intersection(&Rectangle::new(
       Point::new(0, 0),
       Size::new(self.width as u32, self.height as u32),
     ));
+    if rect.size.width == 0 || rect.size.height == 0 {
+      return;
+    }
     let top = rect.top_left.y.max(0) as usize;
     let left = rect.top_left.x.max(0) as usize;
     let bottom = (top + rect.size.height as usize).min(self.height);
     let right = (left + rect.size.width as usize).min(self.width);
     for y in top..bottom {
-      for x in left..right {
-        let Some(offset) = self.pixel_offset(x, y) else { continue };
-        for (index, byte) in bytes.into_iter().enumerate() {
-          unsafe { ptr::write_volatile(self.ptr.add(offset + index), byte) };
-        }
-      }
+      self.backbuffer[y * self.width + left..y * self.width + right].fill(bytes);
     }
   }
 }
@@ -130,10 +153,8 @@ impl DrawTarget for GopDisplay {
   }
 
   fn clear(&mut self, color: Self::Color) -> Result<(), Infallible> {
-    self.fill_rect(
-      Rectangle::new(Point::new(0, 0), Size::new(self.width as u32, self.height as u32)),
-      color,
-    );
+    let bytes = self.pixel_bytes(color);
+    self.backbuffer.fill(bytes);
     Ok(())
   }
 }
