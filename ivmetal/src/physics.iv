@@ -3511,7 +3511,7 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
                   )))
                   ivm:x(9 10)
                 )) 14)
-              ) ivm:f32#0x3c888889) 15)
+              ) ivm:f32#0x3d088889) 15)
             ) 15)
           ))
         ))))
@@ -3583,8 +3583,11 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
 :booba::main#23 {
   ^ = ivm:x(
     ivm:x(
-      ivm:x(ivm:ext:merge[ivm:pair](0 ivm:ext:merge[ivm:pair](1 ivm:ext:merge[ivm:pair](2 ivm:ext:merge[physics:io:draw_rectangle](3 4)))) 4)
-      ivm:x(ivm:eraser ivm:x(0 1))
+      ivm:x(ivm:ext:merge[ivm:pair](0 ivm:ext:merge[ivm:pair](1 ivm:ext:merge[ivm:pair](2 ivm:ext:merge[ivm:pair](3 ivm:ext:merge[ivm:pair](4 ivm:ext:merge[physics:io:draw_rectangle](5 6)))))) 6)
+      ivm:x(
+        ivm:x(ivm:eraser ivm:x(ivm:eraser ivm:x(ivm:eraser ivm:x(ivm:eraser ivm:x(ivm:eraser ivm:x(ivm:eraser ivm:y(ivm:eraser ivm:x(4 5))))))))
+        ivm:x(0 1)
+      )
     )
     ivm:x(2 3)
   )

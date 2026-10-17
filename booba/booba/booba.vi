@@ -86,11 +86,13 @@ pub fn main(&io: &IO) {
           let (cos, sin) = rotation.get();
 
           safe $ivy {
-            ${io} = vi:ext#5[physics:io:draw_rectangle](
+            ${io} = vi:ext#7[physics:io:draw_rectangle](
               ${x}
               ${y}
               ${half_width}
               ${half_height}
+              ${cos}
+              ${sin}
               ${~io}
             )
           };
@@ -101,7 +103,8 @@ pub fn main(&io: &IO) {
     //io.println("END");
     //io.flush();
 
-    engine.update(1.0 / 60.0);
+    //engine.update(1.0 / 60.0);
+    engine.update(1.0 / 30.0);
     safe $ivy { ${io} = vi:ext#1[physics:io:clear_display](${~io}) };
   }
 }

@@ -8,7 +8,7 @@ use core::{cell::RefCell, fmt::Write, mem};
 use anyhow::{Context, Result, ensure};
 use embedded_graphics::{
   prelude::{Point, Primitive, Size},
-  primitives::{Circle, PrimitiveStyle, Rectangle},
+  primitives::{Circle, Line, PrimitiveStyle, Rectangle},
 };
 use embedded_graphics_core::{
   Drawable,
@@ -139,10 +139,10 @@ fn io_stdio<'ivm>() -> impl Register<Host<'ivm>> {
   )
 }
 
-fn io_draw<'ivm>() -> impl Register<Host<'ivm>> {
-  const SCALE: f32 = 8.0;
-  const STROKE: u32 = 2;
+const SCALE: f32 = 8.0;
+const STROKE: u32 = 2;
 
+fn io_draw<'ivm>() -> impl Register<Host<'ivm>> {
   (
     ExtFn(
       "physics:io:draw_circle",
@@ -168,27 +168,48 @@ fn io_draw<'ivm>() -> impl Register<Host<'ivm>> {
     ),
     ExtFn(
       "physics:io:draw_rectangle",
-      move |(IO, center_x, center_y, half_size_x, half_size_y): (IO, f32, f32, f32, f32)| -> IO {
-        let mut display = DISPLAY.0.borrow_mut();
-        let display = display.as_mut().unwrap();
-
-        let top_left_x = (center_x - half_size_x) * SCALE;
-        let top_left_y = (-center_y - half_size_y) * SCALE;
-        let size_x = half_size_x * 2.0 * SCALE;
-        let size_y = half_size_y * 2.0 * SCALE;
-
-        Rectangle::new(
-          Point::new(
-            (top_left_x + display.width() as f32 / 2.0) as i32,
-            (top_left_y + display.height() as f32 / 2.0) as i32,
-          ),
-          Size::new(size_x as u32, size_y as u32),
-        )
-        .into_styled(PrimitiveStyle::with_stroke(Rgb888::WHITE, STROKE))
-        .draw(display);
+      move |(IO, center_x, center_y, half_size_x, half_size_y, cos, sin): (
+        IO,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+      )|
+            -> IO {
+        draw_rect(
+          center_x * SCALE,
+          center_y * SCALE,
+          half_size_x * SCALE,
+          half_size_y * SCALE,
+          cos,
+          sin,
+        );
         IO
       },
     ),
     // no `read_byte`, `read_char` fns :(
   )
+}
+
+fn draw_rect(cx: f32, cy: f32, hx: f32, hy: f32, cos: f32, sin: f32) {
+  let mut display = DISPLAY.0.borrow_mut();
+  let display = display.as_mut().unwrap();
+  let screen_cx = display.width() as f32 / 2.0;
+  let screen_cy = display.height() as f32 / 2.0;
+
+  let corners = [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)].map(|(x, y)| {
+    let world_x = cx + x * cos - y * sin;
+    let world_y = cy + x * sin + y * cos;
+    Point::new((screen_cx + world_x) as i32, (screen_cy - world_y) as i32)
+  });
+
+  let style = PrimitiveStyle::with_stroke(Rgb888::WHITE, STROKE);
+  for i in 0..corners.len() {
+    Line::new(corners[i], corners[(i + 1) % corners.len()])
+      .into_styled(style)
+      .draw(display)
+      .unwrap();
+  }
 }
