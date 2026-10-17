@@ -6,7 +6,7 @@ run:
     uefi-run ../target/x86_64-unknown-uefi/release/ivmetal.efi \
         --bios-path /usr/share/edk2/ovmf/OVMF_CODE.fd \
         --boot \
-        -- -m 512M -no-reboot
+        -- -enable-kvm -cpu host -m 512M -no-reboot
 
 # Run without graphics. Use Ctrl-A, X to close.
 run-no-graphics:
@@ -14,7 +14,7 @@ run-no-graphics:
     uefi-run ../target/x86_64-unknown-uefi/release/ivmetal.efi \
         --bios-path /usr/share/edk2/ovmf/OVMF_CODE.fd \
         --boot \
-        -- -m 3G -nographic -no-reboot
+        -- -enable-kvm -cpu host -m 3G -nographic -no-reboot
 
 build:
     cargo run --manifest-path ../Cargo.toml \

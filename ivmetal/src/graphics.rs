@@ -76,7 +76,8 @@ impl GopDisplay {
     if x >= self.width || y >= self.height {
       return None;
     }
-    let offset = y * self.stride + x * 4;
+    // GOP reports the scanline stride in pixels, not bytes.
+    let offset = (y * self.stride + x) * 4;
     (offset + 4 <= self.size).then_some(offset)
   }
 

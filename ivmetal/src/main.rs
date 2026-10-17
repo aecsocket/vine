@@ -70,7 +70,7 @@ fn run() -> Result<()> {
   let mut heap = Heap::with_size(256 * 1024 * 1024).context("system memory is too small")?;
   let mut ivm = IVM::new();
   let mut host = Host::new(&mut ivm);
-  let extrinsics = (common::all(), io_meta(), io_stdio());
+  let extrinsics = (common::all(), io_meta(), io_stdio(), io_draw());
   let runner = Runner::<IO>::new(&mut heap, &mut host, extrinsics, table, &nets);
 
   // TODO: `workers` shouldn't be a property in `runtime`?
@@ -136,29 +136,56 @@ fn io_stdio<'ivm>() -> impl Register<Host<'ivm>> {
       DISPLAY.0.borrow_mut().as_mut().unwrap().clear(Rgb888::BLACK);
       IO
     }),
+  )
+}
+
+fn io_draw<'ivm>() -> impl Register<Host<'ivm>> {
+  const SCALE: f32 = 8.0;
+  const STROKE: u32 = 2;
+
+  (
     ExtFn(
       "physics:io:draw_circle",
-      move |(IO, top_left_x, top_left_y, diameter): (IO, f32, f32, f32)| -> IO {
+      move |(IO, center_x, center_y, radius): (IO, f32, f32, f32)| -> IO {
         let mut display = DISPLAY.0.borrow_mut();
         let display = display.as_mut().unwrap();
-        let (top_left_x, top_left_y, diameter) =
-          (top_left_x as i32, top_left_y as i32, diameter as u32);
-        Circle::new(Point::new(top_left_x, top_left_y), diameter)
-          .into_styled(PrimitiveStyle::with_stroke(Rgb888::WHITE, 1))
-          .draw(display);
+
+        let top_left_x = (center_x - radius) * SCALE;
+        let top_left_y = (-center_y - radius) * SCALE;
+        let diameter = radius * 2.0 * SCALE;
+
+        Circle::new(
+          Point::new(
+            (top_left_x + display.width() as f32 / 2.0) as i32,
+            (top_left_y + display.height() as f32 / 2.0) as i32,
+          ),
+          diameter as u32,
+        )
+        .into_styled(PrimitiveStyle::with_stroke(Rgb888::WHITE, STROKE))
+        .draw(display);
         IO
       },
     ),
     ExtFn(
       "physics:io:draw_rectangle",
-      move |(IO, top_left_x, top_left_y, size_x, size_y): (IO, f32, f32, f32, f32)| -> IO {
+      move |(IO, center_x, center_y, half_size_x, half_size_y): (IO, f32, f32, f32, f32)| -> IO {
         let mut display = DISPLAY.0.borrow_mut();
         let display = display.as_mut().unwrap();
-        let (top_left_x, top_left_y, size_x, size_y) =
-          (top_left_x as i32, top_left_y as i32, size_x as u32, size_y as u32);
-        Rectangle::new(Point::new(top_left_x, top_left_y), Size::new(size_x, size_y))
-          .into_styled(PrimitiveStyle::with_stroke(Rgb888::WHITE, 1))
-          .draw(display);
+
+        let top_left_x = (center_x - half_size_x) * SCALE;
+        let top_left_y = (-center_y - half_size_y) * SCALE;
+        let size_x = half_size_x * 2.0 * SCALE;
+        let size_y = half_size_y * 2.0 * SCALE;
+
+        Rectangle::new(
+          Point::new(
+            (top_left_x + display.width() as f32 / 2.0) as i32,
+            (top_left_y + display.height() as f32 / 2.0) as i32,
+          ),
+          Size::new(size_x as u32, size_y as u32),
+        )
+        .into_styled(PrimitiveStyle::with_stroke(Rgb888::WHITE, STROKE))
+        .draw(display);
         IO
       },
     ),
