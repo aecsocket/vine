@@ -61,7 +61,7 @@ pub fn main(&io: &IO) {
 
   let engine = Engine({
     bodies: bodies,
-    gravity: (0.0, -9.81 * 2.0),
+    gravity: (0.0, -9.81),
   });
 
   while io.forever() {
@@ -82,12 +82,11 @@ pub fn main(&io: &IO) {
     }
     io.println("END");
     io.flush();
+    engine.update(1.0 / 60.0);
   }
 
 
 
-//    safe $ivy { ${io} = vi:ext#1[root:io:physics_sl] };
-//
 //    match io.read_line() {
 //      Some(_) {
 //        engine.update(1.0 / 60.0);

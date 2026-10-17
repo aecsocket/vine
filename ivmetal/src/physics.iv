@@ -269,31 +269,12 @@ iv:main {
   ) = ivm:graft[:booba::main#1]
   ivm:graft[:root::util::erase::drop] = ivm:x(ivm:eraser ivm:eraser)
   ivm:graft[:root::numeric::F32::neg] = ivm:x(ivm:f32#0x411cf5c3 17)
-  ivm:graft[:root::numeric::F32::mul] = ivm:x(17 ivm:x(ivm:f32#0x40000000 18))
-  ivm:graft[:root::IO::println] = ivm:x(
-    ivm:x(0 19)
-    ivm:x(ivm:x(ivm:n32#5 ivm:x(ivm:x(ivm:n32#70 ivm:x(ivm:n32#82 ivm:x(ivm:n32#65 ivm:x(ivm:n32#77 ivm:x(ivm:n32#69 20))))) 20)) 21)
-  )
-  ivm:graft[:root::util::erase::drop] = ivm:x(21 ivm:eraser)
-  ivm:x(14 ivm:x(ivm:f32 18)) = ivm:x(22 23)
-  ivm:graft[:root::util::duplicate::fork] = ivm:x(ivm:x(22 24) 25)
-  ivm:graft[:root::data::List::iter::iter] = ivm:x(25 26)
-  ivm:x(ivm:x(19 27) 26) = ivm:graft[:booba::main#12]
-  ivm:graft[:root::util::erase::drop] = ivm:x(ivm:eraser ivm:eraser)
-  ivm:graft[:root::IO::println] = ivm:x(
-    ivm:x(27 28)
-    ivm:x(ivm:x(ivm:n32#3 ivm:x(ivm:x(ivm:n32#69 ivm:x(ivm:n32#78 ivm:x(ivm:n32#68 29))) 29)) 30)
-  )
-  ivm:graft[:root::util::erase::drop] = ivm:x(30 ivm:eraser)
-  ivm:graft[:root::IO::flush] = ivm:x(ivm:x(28 31) 32)
-  ivm:graft[:root::util::erase::drop] = ivm:x(32 ivm:eraser)
   ivm:x(
-    ivm:x(31 1)
-    ivm:x(24 23)
-  ) = ivm:graft[:booba::main#22]
+    ivm:x(0 1)
+    ivm:x(14 ivm:x(ivm:f32 17))
+  ) = ivm:graft[:booba::main#11]
   ivm:graft[:root::util::duplicate::fork] = ivm:x(ivm:x(ivm:n32#8 15) 11)
   ivm:graft[:root::util::duplicate::fork] = ivm:x(ivm:x(ivm:f32#0x40033333 16) 8)
-  ivm:eraser = ivm:eraser
   ivm:eraser = ivm:eraser
 }
 
@@ -357,10 +338,6 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
 }
 
 :root::ops::Cast::identity::cast {
-  ^ = ivm:x(0 0)
-}
-
-:root::data::List::iter::iter {
   ^ = ivm:x(0 0)
 }
 
@@ -3936,27 +3913,6 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
   )
 }
 
-:root::IO::println {
-  ^ = ivm:x(
-    ivm:x(0 1)
-    ivm:x(ivm:x(
-      ivm:y(2 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
-        ivm:branch[:root::data::List::Iter::advance#3, :root::data::List::Iter::advance#2]
-        ivm:x(2 ivm:x(3 ivm:x(4 ivm:x(ivm:ext:merge[ivm:branch](
-          ivm:branch[:root::IO::print#4, :root::IO::print#5]
-          ivm:x(ivm:x(0 ivm:ext:merge[root:io:print_char](ivm:n32#10 1)) 5)
-        ) 5))))
-      )))
-      ivm:x(3 4)
-    ) ivm:eraser)
-  )
-}
-
-:root::IO::flush {
-  ^ = ivm:x(ivm:x(ivm:ext:split[root:io:flush](0 ivm:eraser) 0) ivm:eraser)
-  ivm:eraser = ivm:eraser
-}
-
 :booba::engine::integrate_bodies#4 {
   ^ = ivm:x(ivm:x(ivm:x(0 0) ivm:eraser) ivm:eraser)
 }
@@ -6929,22 +6885,9 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
   )))))
 }
 
-:booba::main#12 {
-  ^ = ivm:x(0 ivm:x(
-    ivm:y(1 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
-      ivm:branch[:root::data::List::Iter::advance#3, :root::data::List::Iter::advance#2]
-      ivm:x(1 ivm:x(2 ivm:x(3 ivm:x(ivm:ext:merge[ivm:branch](
-        ivm:branch[:booba::main#15, :booba::main#16]
-        ivm:x(0 4)
-      ) 4))))
-    )))
-    ivm:x(2 3)
-  ))
-}
-
-:booba::main#22 {
+:booba::main#11 {
   ^ = ivm:x(ivm:x(ivm:ext:split[vi:io:ready](ivm:ext:merge[ivm:branch](
-    ivm:branch[:booba::main#24, :booba::main#23]
+    ivm:branch[:booba::main#13, :booba::main#12]
     ivm:x(ivm:x(0 1) 2)
   ) 0) 1) 2)
 }
@@ -7049,17 +6992,70 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
   )
 }
 
-:booba::main#15 {
+:booba::main#12 {
+  ^ = ivm:x(
+    ivm:x(ivm:ext:merge[root:io:print_char](ivm:n32#70 ivm:ext:merge[root:io:print_char](ivm:n32#82 ivm:ext:merge[root:io:print_char](ivm:n32#65 ivm:ext:merge[root:io:print_char](ivm:n32#77 ivm:ext:merge[root:io:print_char](ivm:n32#69 ivm:ext:merge[root:io:print_char](ivm:n32#10 0)))))) 1)
+    ivm:x(ivm:y(
+      ivm:x(
+        ivm:y(2 ivm:y(3 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
+          ivm:branch[:root::data::List::IterRef::advance#3, :root::data::List::IterRef::advance#2]
+          ivm:x(3 ivm:x(
+            ivm:x(4 5)
+            ivm:x(ivm:ext:merge[ivm:branch](
+              ivm:branch[:booba::engine::integrate_bodies#4, :booba::engine::integrate_bodies#5]
+              ivm:x(ivm:x(ivm:x(
+                ivm:x(ivm:x(2 ivm:x(5 6)) 7)
+                ivm:x(ivm:y(ivm:eraser ivm:x(
+                  ivm:y(8 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
+                    ivm:branch[:root::data::List::head_tail#3, :root::data::List::head_tail#2]
+                    ivm:x(8 ivm:x(9 ivm:x(10 ivm:x(ivm:ext:merge[ivm:branch](
+                      ivm:branch[:booba::engine::resolve_all_contacts#4, :booba::engine::resolve_all_contacts#5]
+                      ivm:x(ivm:x(ivm:x(ivm:n32 ivm:x(11 11)) 12) 13)
+                    ) 13))))
+                  )))
+                  ivm:x(9 10)
+                )) 14)
+              ) ivm:f32#0x3c888889) 15)
+            ) 15)
+          ))
+        ))))
+        ivm:x(4 6)
+      )
+      ivm:x(
+        ivm:y(16 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
+          ivm:branch[:root::data::List::Iter::advance#3, :root::data::List::Iter::advance#2]
+          ivm:x(16 ivm:x(17 ivm:x(18 ivm:x(ivm:ext:merge[ivm:branch](
+            ivm:branch[:booba::main#17, :booba::main#18]
+            ivm:x(ivm:x(0 ivm:ext:merge[root:io:print_char](ivm:n32#69 ivm:ext:merge[root:io:print_char](ivm:n32#78 ivm:ext:merge[root:io:print_char](ivm:n32#68 ivm:ext:merge[root:io:print_char](ivm:n32#10 ivm:ext:split[root:io:flush](ivm:ext:split[vi:io:ready](ivm:ext:merge[ivm:branch](
+              ivm:branch[:booba::main#13, :booba::main#12]
+              ivm:x(
+                ivm:x(19 1)
+                ivm:x(12 14)
+              )
+            ) 19) ivm:eraser)))))) 20)
+          ) 20))))
+        )))
+        ivm:x(17 18)
+      )
+    ) 7)
+  )
+}
+
+:booba::main#13 {
   ^ = ivm:x(ivm:x(0 0) ivm:eraser)
 }
 
-:booba::main#16 {
+:booba::main#17 {
+  ^ = ivm:x(ivm:x(0 0) ivm:eraser)
+}
+
+:booba::main#18 {
   ^ = ivm:x(
     ivm:x(0 1)
     ivm:x(
       ivm:x(2 ivm:x(
         ivm:y(3 ivm:x(ivm:ext:merge[ivm:branch](
-          ivm:branch[:booba::main#20, :booba::main#21]
+          ivm:branch[:booba::main#22, :booba::main#23]
           ivm:x(ivm:x(
             ivm:x(0 4)
             ivm:x(ivm:x(2 ivm:x(3 ivm:x(5 ivm:x(6 ivm:x(7 8))))) 9)
@@ -7071,7 +7067,7 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
         ivm:y(11 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
           ivm:branch[:root::data::List::Iter::advance#3, :root::data::List::Iter::advance#2]
           ivm:x(11 ivm:x(12 ivm:x(13 ivm:x(ivm:ext:merge[ivm:branch](
-            ivm:branch[:booba::main#15, :booba::main#16]
+            ivm:branch[:booba::main#17, :booba::main#18]
             ivm:x(ivm:x(4 1) 14)
           ) 14))))
         )))
@@ -7081,7 +7077,7 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
   )
 }
 
-:booba::main#20 {
+:booba::main#22 {
   ^ = ivm:x(
     ivm:x(
       ivm:x(0 1)
@@ -7133,7 +7129,7 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
   )
 }
 
-:booba::main#21 {
+:booba::main#23 {
   ^ = ivm:x(
     ivm:x(
       ivm:x(0 1)
@@ -7219,46 +7215,5 @@ vi:synthetic#2[vi:synthetic:enum_deconstruct[:root::logical::Option]] {
       ))
     )
   )
-}
-
-:booba::main#23 {
-  ^ = ivm:x(
-    ivm:x(ivm:ext:split[vi:io:ready](ivm:ext:merge[ivm:branch](
-      ivm:branch[:booba::main#24, :booba::main#23]
-      ivm:x(
-        ivm:x(0 1)
-        ivm:x(2 3)
-      )
-    ) 0) 1)
-    ivm:x(ivm:x(
-      ivm:y(4 ivm:y(5 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
-        ivm:branch[:root::data::List::IterRef::advance#3, :root::data::List::IterRef::advance#2]
-        ivm:x(5 ivm:x(
-          ivm:x(6 7)
-          ivm:x(ivm:ext:merge[ivm:branch](
-            ivm:branch[:booba::engine::integrate_bodies#4, :booba::engine::integrate_bodies#5]
-            ivm:x(ivm:x(ivm:x(
-              ivm:x(ivm:x(4 ivm:x(7 8)) 9)
-              ivm:x(ivm:y(ivm:eraser ivm:x(
-                ivm:y(10 ivm:ext:merge[vi:n32:ne](ivm:n32 ivm:ext:merge[ivm:branch](
-                  ivm:branch[:root::data::List::head_tail#3, :root::data::List::head_tail#2]
-                  ivm:x(10 ivm:x(11 ivm:x(12 ivm:x(ivm:ext:merge[ivm:branch](
-                    ivm:branch[:booba::engine::resolve_all_contacts#4, :booba::engine::resolve_all_contacts#5]
-                    ivm:x(ivm:x(ivm:x(ivm:n32 ivm:x(13 13)) 2) 14)
-                  ) 14))))
-                )))
-                ivm:x(11 12)
-              )) 3)
-            ) ivm:f32#0x3c888889) 15)
-          ) 15)
-        ))
-      ))))
-      ivm:x(6 8)
-    ) 9)
-  )
-}
-
-:booba::main#24 {
-  ^ = ivm:x(ivm:x(0 0) ivm:eraser)
 }
 
