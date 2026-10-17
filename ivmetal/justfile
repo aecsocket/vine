@@ -7,4 +7,9 @@ run:
     uefi-run ../target/x86_64-unknown-uefi/release/ivmetal.efi \
         --bios-path /usr/share/edk2/ovmf/OVMF_CODE.fd \
         --boot \
-        -- -nographic -no-reboot
+        -- -m 3G -nographic -no-reboot
+
+build:
+    cargo run --manifest-path ../Cargo.toml \
+        --release --bin vine build ../booba/booba \
+        > src/physics.iv

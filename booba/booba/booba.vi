@@ -64,7 +64,7 @@ pub fn main(&io: &IO) {
     gravity: (0.0, -9.81 * 2.0),
   });
 
-  loop {
+  while io.forever() {
     io.println("FRAME");
     for body in engine.bodies {
       let (x, y) = body.position;
@@ -82,13 +82,17 @@ pub fn main(&io: &IO) {
     }
     io.println("END");
     io.flush();
-
-    match io.read_line() {
-      Some(_) {
-        engine.update(1.0 / 60.0);
-        continue;
-      }
-      None() { break; }
-    }
   }
+
+
+
+//    safe $ivy { ${io} = vi:ext#1[root:io:physics_sl] };
+//
+//    match io.read_line() {
+//      Some(_) {
+//        engine.update(1.0 / 60.0);
+//        continue;
+//      }
+//      None() { break; }
+//    }
 }

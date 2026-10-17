@@ -19,8 +19,6 @@ use vine_util::register::Register;
 #[entry]
 fn main() -> Status {
   uefi::helpers::init().unwrap();
-  info!("hello world!");
-  boot::stall(Duration::from_secs(1));
   match run() {
     Ok(()) => {
       info!("success!!");
@@ -35,16 +33,16 @@ fn main() -> Status {
 
 fn run() -> Result<()> {
   // setup copied from `ivm_cli.rs`
-  let src_contents = include_str!("hi.iv");
+  let src_contents = include_str!("physics.iv");
   let table = &mut ivy::name::Table::default();
   let nets = ivy::text::parser::Parser::parse(table, &src_contents).context("parsing program")?;
   let nets = nets.to_flat_nets().context("creating flat nets")?;
 
   // setup copied from `RunArgs::run`
-  let mut heap = Heap::new();
+  let mut heap = Heap::with_size(2 * 1024 * 1024 * 1024).context("system memory is too small")?;
   let mut ivm = IVM::new();
   let mut host = Host::new(&mut ivm);
-  let extrinsics = (common::all(), io_stdio());
+  let extrinsics = (common::all(), io_meta(), io_stdio());
   let runner = Runner::<IO>::new(&mut heap, &mut host, extrinsics, table, &nets);
 
   // TODO: `workers` shouldn't be a property in `runtime`?
@@ -74,6 +72,14 @@ impl<'ivm> ExtTyCastStatic<'ivm> for IO {
   unsafe fn from_payload_static(_: Word) -> Self {
     IO
   }
+}
+
+fn io_meta<'ivm>() -> impl Register<Host<'ivm>> {
+  (
+    ExtFn("vi:io:split", |IO| (IO, IO)),
+    ExtFn("vi:io:merge", |(IO, IO)| IO),
+    ExtFn("vi:io:ready", |IO| (true, IO)),
+  )
 }
 
 fn io_stdio<'ivm>() -> impl Register<Host<'ivm>> {
