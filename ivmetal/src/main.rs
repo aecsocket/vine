@@ -1,19 +1,20 @@
 #![no_std]
 #![no_main]
 
-use core::time::Duration;
+use core::{fmt::Write, time::Duration};
 
 use anyhow::{Context, Result, ensure};
 use ivm::{
   host::{
     Host, IVM,
-    ext::{ExtTyRegister, common},
+    ext::{ExtFn, ExtTyRegister, common},
     runner::Runner,
   },
   runtime::{NoopHooks, ext::ExtTyCastStatic, heap::Heap, word::Word},
 };
 use log::{error, info};
 use uefi::prelude::*;
+use vine_util::register::Register;
 
 #[entry]
 fn main() -> Status {
@@ -22,8 +23,8 @@ fn main() -> Status {
   boot::stall(Duration::from_secs(1));
   match run() {
     Ok(()) => {
-      info!("success");
-      Status::SUCCESS
+      info!("success!!");
+      loop {}
     }
     Err(err) => {
       error!("error: {err:?}");
@@ -43,7 +44,7 @@ fn run() -> Result<()> {
   let mut heap = Heap::new();
   let mut ivm = IVM::new();
   let mut host = Host::new(&mut ivm);
-  let extrinsics = common::all();
+  let extrinsics = (common::all(), io_stdio());
   let runner = Runner::<IO>::new(&mut heap, &mut host, extrinsics, table, &nets);
 
   // TODO: `workers` shouldn't be a property in `runtime`?
@@ -73,4 +74,30 @@ impl<'ivm> ExtTyCastStatic<'ivm> for IO {
   unsafe fn from_payload_static(_: Word) -> Self {
     IO
   }
+}
+
+fn io_stdio<'ivm>() -> impl Register<Host<'ivm>> {
+  (
+    ExtFn("root:io:print_char", move |(IO, n): (IO, u32)| -> IO {
+      let char = char::try_from(n).unwrap();
+      uefi::system::with_stdout(|stdout| {
+        stdout.write_char(char).unwrap();
+      });
+      IO
+    }),
+    ExtFn("root:io:print_byte", move |(IO, b): (IO, u32)| -> IO {
+      if let Ok(char) = char::try_from(b) {
+        // todo not good to silently drop these :(
+        uefi::system::with_stdout(|stdout| {
+          stdout.write_char(char).unwrap();
+        });
+      }
+      IO
+    }),
+    ExtFn("root:io:flush", move |IO| -> IO {
+      // i think UEFI just flushes for us?
+      IO
+    }),
+    // no `read_byte`, `read_char` fns :(
+  )
 }
