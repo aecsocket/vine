@@ -3,6 +3,11 @@
     "Vine": ["vi"]
   },
   "lsp": {
+    "slang": {
+      "binary": {
+        "arguments": ["-Wall"]
+      }
+    },
     "vine": {
       "binary": {
         "path": "/var/home/boris/Projects/vine/target/debug/vine",
