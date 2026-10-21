@@ -5,7 +5,7 @@ module link
 (
     input logic clk,
     input logic rst,
-    pairs_if.client pairs,
+    heap_if.client heap,
     link_if.engine link
 );
 
@@ -26,13 +26,13 @@ always_ff @(posedge clk) begin : cycle
     if (rst) begin
         state <= IDLE;
         link.done <= 1'b0;
-        pairs.write_enable <= 1'b0;
-        pairs.read_addr <= '0;
+        heap.write_enable <= 1'b0;
+        heap.read_addr <= '0;
         disable cycle;
     end
 
     link.done <= 1'b0;
-    pairs.write_enable <= 1'b0;
+    heap.write_enable <= 1'b0;
 
     case (state)
         IDLE: begin : handle_idle
@@ -52,7 +52,7 @@ always_ff @(posedge clk) begin : cycle
                 link.done <= 1'b1;
                 state <= IDLE;
             end else if (a.tag == TAG_WIRE && b.tag == TAG_WIRE) begin
-                pairs.read_addr <= a.payload;
+                heap.read_addr <= a.payload;
                 state <= WAIT_A;
             end else
                 $fatal(1, "unimplemented");
@@ -61,15 +61,15 @@ always_ff @(posedge clk) begin : cycle
             state <= FETCH_A;
         end
         FETCH_A: begin
-            a <= pairs.read_data;
-            pairs.read_addr <= b.payload;
+            a <= heap.read_data;
+            heap.read_addr <= b.payload;
             state <= WAIT_B;
         end
         WAIT_B: begin
             state <= FETCH_B;
         end
         FETCH_B: begin
-            b <= pairs.read_data;
+            b <= heap.read_data;
             state <= LINK;
         end
         default: begin end

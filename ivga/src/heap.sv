@@ -1,5 +1,6 @@
+// heap of data storing all nodes and ports;
 // abstraction over `bram` which uses `ports_pkg` types as parameters.
-module pair_ram (
+module heap (
     input  logic    clk,
     pairs_if.memory mem
 );

@@ -13,9 +13,9 @@
 module interact
     import ports_pkg::*;
 (
-    input  logic clk,
-    pairs_if.client pairs,
-    link_if.client  link,
+    input logic clk,
+    heap_if.client heap,
+    link_if.client link,
     interact_if.engine interact
 );
 

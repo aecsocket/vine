@@ -1,2 +1,11 @@
-build tb-name:
-    verilator --binary -Wall -Werror-IMPLICIT {{tb-name}}
+test name:
+    #!/usr/bin/env sh
+    set -eu
+    cd src/
+    top={{quote(name)}}
+    verilator \
+        --binary --assert --trace-vcd --trace-structs \
+        -Wall -Werror-IMPLICIT -Wno-fatal \
+        --top-module "$top" \
+        ports_pkg.sv *_if.sv -y . "$top.sv"
+    "./obj_dir/V$top"

@@ -6,6 +6,8 @@
 - https://pages.hmc.edu/harris/ddca/ddcarv.html
 - https://hdlbits.01xz.net/wiki/Main_Page
 - https://nandland.com/lesson-1-what-is-an-fpga/
+- https://blog.rhye.org/post/fpgas-for-software-engineers-0-basics/
+  - https://x.com/ludwigABAP/status/1873080552821297222
 
 ## nandland
 
