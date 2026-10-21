@@ -3,64 +3,75 @@
 module link
     import ports_pkg::*;
 (
-    input  logic    clk,
+    input logic clk,
+    input logic rst,
     pairs_if.client pairs,
-    link_if.engine  link
+    link_if.engine link
 );
 
 typedef enum logic [2:0] {
     IDLE,
-    FETCH_AUX_A,
-    WAIT_AUX_A,
-    FETCH_AUX_B,
-    WAIT_AUX_B,
-    LINK
+    LINK,
+    WAIT_A,
+    FETCH_A,
+    WAIT_B,
+    FETCH_B
 } state_t;
 
 state_t state;
-// when someone gives us a request to link A and B,
-// we store A's and B's payloads (addresses) into here.
-// so if on the next cycle they submit another request,
-// it won't overwrite our current one.
-addr_t a_addr;
-port_t a_aux_port;
-addr_t b_addr;
-port_t b_aux_port;
+port_t a;
+port_t b;
 
-always_ff @(posedge clk) begin
+always_ff @(posedge clk) begin : cycle
+    if (rst) begin
+        state <= IDLE;
+        link.done <= 1'b0;
+        pairs.write_enable <= 1'b0;
+        pairs.read_addr <= '0;
+        disable cycle;
+    end
+
     link.done <= 1'b0;
+    pairs.write_enable <= 1'b0;
 
     case (state)
-        FETCH_AUX_A: begin
-            // when we get a request to link nodes,
-            // first thing we do is to fetch what A's and B's aux ports are.
-            // this tells us *how* we link the two.
-            a_addr <= link.a.payload;
-            b_addr <= link.b.payload;
-            pairs.read_addr <= link.a.payload;
-            state <= FETCH_AUX_B;
-        end
-        FETCH_AUX_B: begin
-            // now we've got A's aux port back. save it in our register.
-            a_aux_port <= pairs.read_data;
-            // and go fetch B.
-            pairs.read_addr <= b_addr;
+        IDLE: begin : handle_idle
+            if (!link.request)
+                disable handle_idle;
+
+            a <= link.a;
+            b <= link.b;
             state <= LINK;
         end
         LINK: begin
-            // now we've got B's aux port.
-            b_aux_port <= pairs.read_data;
-            // we now know how to link A and B together.
-
-            // if A and B are both erasers, then there's nothing to do;
-            // we complete immediately
-            if (a_aux_port.tag == TAG_ERASE && b_aux_port.tag == TAG_ERASE) begin
+            // by this point, `a` and `b` have been set to their correct values
+            // for this link cycle
+            if (a.tag == TAG_ERASE && b.tag == TAG_ERASE) begin
+                // if A and B are both erasers, then there's nothing to do;
+                // we complete immediately
                 link.done <= 1'b1;
-                state <= DONE;
+                state <= IDLE;
+            end else if (a.tag == TAG_WIRE && b.tag == TAG_WIRE) begin
+                pairs.read_addr <= a.payload;
+                state <= WAIT_A;
             end else
                 $fatal(1, "unimplemented");
         end
-        DONE: begin end
+        WAIT_A: begin
+            state <= FETCH_A;
+        end
+        FETCH_A: begin
+            a <= pairs.read_data;
+            pairs.read_addr <= b.payload;
+            state <= WAIT_B;
+        end
+        WAIT_B: begin
+            state <= FETCH_B;
+        end
+        FETCH_B: begin
+            b <= pairs.read_data;
+            state <= LINK;
+        end
         default: begin end
     endcase
 end

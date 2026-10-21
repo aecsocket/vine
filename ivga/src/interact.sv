@@ -16,8 +16,7 @@ module interact
     input  logic clk,
     pairs_if.client pairs,
     link_if.client  link,
-    input  port_t a,
-    input  port_t b
+    interact_if.engine interact
 );
 
 typedef enum logic [2:0] {
@@ -37,18 +36,22 @@ port_t annihilate_b;
 // and same with the 2nd port.
 logic annihilate;
 assign annihilate =
-    a.tag == ports_pkg::TAG_COMB
-    && b.tag == ports_pkg::TAG_COMB
-    && a.label == b.label;
+    interact.a.tag == ports_pkg::TAG_COMB
+    && interact.b.tag == ports_pkg::TAG_COMB
+    && interact.a.label == interact.b.label;
 
 always_ff @(posedge clk) begin
     link.request <= 1'b0;
 
     case (state)
-        IDLE: begin
+        // the `: handle_idle` stuff is essentially like an early return guard
+        IDLE: begin : handle_idle
+            if (!interact.request)
+                disable handle_idle;
+
             if (annihilate) begin
-                annihilate_a <= a;
-                annihilate_b <= b;
+                annihilate_a <= interact.a;
+                annihilate_b <= interact.b;
 
                 // to annihilate NA and NB, we say:
                 // - make up two fresh wires, which connect to:
@@ -59,12 +62,12 @@ always_ff @(posedge clk) begin
                 //   - so basically, "link NA's aux port 1 and NB's aux port 1"
                 link.a <= '{
                     label: '0,
-                    payload: a.payload,
+                    payload: interact.a.payload,
                     tag: TAG_WIRE
                 };
                 link.b <= '{
                     label: '0,
-                    payload: b.payload,
+                    payload: interact.b.payload,
                     tag: TAG_WIRE
                 };
                 // submit the request to the link engine,
