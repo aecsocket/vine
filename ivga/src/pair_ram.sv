@@ -1,11 +1,7 @@
 // abstraction over `bram` which uses `ports_pkg` types as parameters.
 module pair_ram (
-    input  logic             clk,
-    input  logic             write_enable,
-    input  ports_pkg::addr_t write_addr,
-    input  ports_pkg::port_t write_data,
-    input  ports_pkg::addr_t read_addr,
-    output ports_pkg::port_t read_data
+    input  logic    clk,
+    pairs_if.memory mem
 );
 
 // so here, we make a block RAM with a data with of 64 bits,
@@ -19,11 +15,11 @@ bram #(
     .ADDR_WIDTH($bits(ports_pkg::addr_t))
 ) bram (
 	.clk         (clk),
-	.write_enable(write_enable),
-	.write_addr  (write_addr),
-	.write_data  (write_data),
-	.read_addr   (read_addr),
-	.read_data   (read_data)
+	.write_enable(mem.write_enable),
+	.write_addr  (mem.write_addr),
+	.write_data  (mem.write_data),
+	.read_addr   (mem.read_addr),
+	.read_data   (mem.read_data)
 );
 
 endmodule
