@@ -30,3 +30,9 @@ ok done reading, it seems simple enough but I need some hands on practice.
 ## HDLBits
 
 got partway thru. I get the basic idea of writing verilog. want some proper practice tho.
+
+# Building
+
+## 21 Oct
+
+got a basic BRAM working. want to get interactions running now. I think the simplest way is to make an interact.sv, have it take 2 words, and the system memory, then work with that. somehow? idk.

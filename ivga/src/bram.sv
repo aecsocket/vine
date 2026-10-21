@@ -1,4 +1,7 @@
 // https://docs.amd.com/r/en-US/ug901-vivado-synthesis/Simple-Dual-Port-Block-RAM-with-Single-Clock-Verilog
+//
+// simple ass two-port BRAM module. lets you read and write from 2 different
+// addrs in the same clock cycle.
 module bram #(
   parameter int DATA_WIDTH = 32,
   parameter int ADDR_WIDTH = 10
