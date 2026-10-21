@@ -73,6 +73,7 @@ endtask
 initial begin
     test_read_uninit();
     test_write_read_zero();
+    test_write_read_addrs();
     $display("tests passed");
     $finish;
 end

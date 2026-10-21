@@ -32,11 +32,16 @@ always_ff @(posedge clk) begin : cycle
         engine.alloc_addr <= 0;
         engine.alloc_done <= 0;
         engine.oom <= 0;
+        state <= IDLE;
         empty <= addr_t'(0);
-        head <= addr_t'(0);
+        head <= ADDR_NONE;
         old_head <= addr_t'(0);
         disable cycle;
     end
+
+    engine.alloc_addr <= addr_t'(0);
+    engine.alloc_done <= 0;
+    engine.oom <= 0;
 
     case (state)
         IDLE: begin
@@ -48,6 +53,7 @@ always_ff @(posedge clk) begin : cycle
                     // our freelist is empty, we'll just give you a bit off
                     // the unalloc'd space
                     engine.alloc_addr <= empty;
+                    engine.alloc_done <= 1;
                     empty <= empty + 1;
                 end else begin
                     // we can reuse an allocation from before,
