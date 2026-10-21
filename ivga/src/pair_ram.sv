@@ -1,6 +1,5 @@
 // abstraction over `bram` which uses `ports_pkg` types as parameters.
-// short for "pair RAM".
-module pram (
+module pair_ram (
     input  logic             clk,
     input  logic             write_enable,
     input  ports_pkg::addr_t write_addr,
