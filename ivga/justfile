@@ -7,5 +7,5 @@ test name:
         --binary --assert --trace-vcd --trace-structs \
         -Wall -Werror-IMPLICIT -Wno-fatal \
         --top-module "$top" \
-        ports_pkg.sv *_if.sv -y . "$top.sv"
+        ports_pkg.sv *_if.sv mem/*_if.sv -y . -y mem "$top.sv"
     "./obj_dir/V$top"

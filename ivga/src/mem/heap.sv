@@ -1,8 +1,8 @@
 // heap of data storing all nodes and ports;
 // abstraction over `bram` which uses `ports_pkg` types as parameters.
 module heap (
-    input  logic    clk,
-    pairs_if.memory mem
+    input logic clk,
+    heap_if.memory mem
 );
 
 // so here, we make a block RAM with a data with of 64 bits,
