@@ -19,7 +19,7 @@ heap heap (
 );
 initial begin
     foreach (heap.bram.mem[index])
-        heap.bram.mem[index] = PORT_INVALID;
+        heap.bram.mem[index] = PORT_EMPTY;
 end
 
 // set up allocator

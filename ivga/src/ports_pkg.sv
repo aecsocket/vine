@@ -3,6 +3,7 @@ package ports_pkg;
     typedef enum logic [2:0] {
         TAG_INVALID = 3'd0,
         TAG_WIRE    = 3'd1,
+        TAG_GRAFT   = 3'd2,
         TAG_ERASE   = 3'd3,
         TAG_COMB    = 3'd5
     } tag_t;
@@ -33,5 +34,6 @@ package ports_pkg;
         tag_t        tag;
     } port_t;
 
-    localparam port_t PORT_INVALID = '1;
+    // port in the heap which just hasn't been assigned yet
+    localparam port_t PORT_EMPTY = '0;
 endpackage

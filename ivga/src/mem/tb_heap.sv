@@ -20,15 +20,15 @@ heap heap (
 );
 initial begin
     foreach (heap.bram.mem[index])
-        heap.bram.mem[index] = PORT_INVALID;
+        heap.bram.mem[index] = PORT_EMPTY;
 end
 
 // tests
 task automatic test_read_uninit();
     heap_bus.read_addr = 0;
     @(negedge clk);
-    if (heap_bus.read_data != PORT_INVALID)
-        $fatal(1, "expected to read invalid port");
+    if (heap_bus.read_data != PORT_EMPTY)
+        $fatal(1, "expected to read empty port");
 endtask
 
 task automatic test_write_read_zero();
