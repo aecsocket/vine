@@ -32,4 +32,6 @@ package ports_pkg;
         logic [44:0] payload;
         tag_t        tag;
     } port_t;
+
+    localparam port_t PORT_INVALID = '1;
 endpackage

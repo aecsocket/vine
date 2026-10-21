@@ -17,7 +17,7 @@ heap heap (
 );
 initial begin
     foreach (heap.bram.mem[index])
-        heap.bram.mem[index] = INVALID;
+        heap.bram.mem[index] = PORT_INVALID;
 end
 
 // set up allocator
@@ -40,30 +40,30 @@ endtask
 
 // tests
 task automatic test_one_alloc();
-    if (alloc_bus.alloc_done !== 0)
-        $fatal(1, "expected alloc_done to be 0 before alloc");
+    if (alloc_bus.done !== 0)
+        $fatal(1, "expected done to be 0 before alloc");
     @(negedge clk);
     alloc_bus.alloc = 1;
 
     @(negedge clk);
     alloc_bus.alloc = 0;
 
-    if (alloc_bus.alloc_done !== 1)
+    if (alloc_bus.done !== 1)
         $fatal(1, "expected bump allocation to finish in 1 cycle");
     if (alloc_bus.alloc_addr !== addr_t'(0))
         $fatal(1, "expected bump allocation to allocate address 0");
 endtask
 
 task automatic test_many_allocs();
-    if (alloc_bus.alloc_done !== 0)
-        $fatal(1, "expected alloc_done to be 0 before alloc");
+    if (alloc_bus.done !== 0)
+        $fatal(1, "expected done to be 0 before alloc");
     @(negedge clk);
     alloc_bus.alloc = 1;
 
     @(negedge clk);
     alloc_bus.alloc = 0;
 
-    if (alloc_bus.alloc_done !== 1)
+    if (alloc_bus.done !== 1)
         $fatal(1, "expected first bump allocation to finish in 1 cycle");
     if (alloc_bus.alloc_addr != addr_t'(0))
         $fatal(1, "expected first bump allocation to allocate address 0");
@@ -74,7 +74,7 @@ task automatic test_many_allocs();
     @(negedge clk);
     alloc_bus.alloc = 0;
 
-    if (alloc_bus.alloc_done !== 1)
+    if (alloc_bus.done !== 1)
         $fatal(1, "expected second bump allocation to finish in 1 cycle");
     if (alloc_bus.alloc_addr === addr_t'(0))
         $fatal(1, "expected second bump allocation to allocate above address 0");
