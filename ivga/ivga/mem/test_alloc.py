@@ -9,10 +9,10 @@ Invalid frees/double frees are caller errors, not supported allocator behavior.
 from amaranth import Array, Assert, Cover, Mux, Signal
 from amaranth.asserts import AnySeq
 from amaranth.hdl import Fragment
-from ivga.mem.alloc import ADDR_EMPTY, IDLE, Alloc
-from ivga.verify import Verify
 
 from ivga import Word
+from ivga.mem.alloc import ADDR_EMPTY, IDLE, Alloc
+from ivga.verify import Verify
 
 EMPTY = ADDR_EMPTY.value
 POISON = 0xDEAD_BEEF

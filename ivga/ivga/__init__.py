@@ -13,40 +13,60 @@ ADDR_WIDTH = 10
 ADDR_MAX = (1 << ADDR_WIDTH) - 1
 Addr = _am.unsigned(ADDR_WIDTH)
 
+
 # ports
 class Tag(_enum.Enum, shape=3):
-    INVALID = 0
-    WIRE = 1
-    GRAFT = 2
-    ERASE = 3
-    EXT_VAL = 4
-    COMB = 5
-    EXT_FN = 6
+  INVALID = 0
+  WIRE = 1
+  GRAFT = 2
+  ERASE = 3
+  EXT_VAL = 4
+  COMB = 5
+  EXT_FN = 6
+
 
 class Port(_data.Struct):
-    tag: Tag
-    payload: _am.unsigned(45)
-    label: _am.unsigned(16)
+  tag: Tag
+  payload: _am.unsigned(45)
+  label: _am.unsigned(16)
+
+  # unsafe if used on a port that's not
+  # a principal port of Comb or ExtVal
+  @staticmethod
+  def aux(m: _am.Module, port):
+    one, two = _am.Signal(Port), _am.Signal(Port)
+    m.d.comb += [
+      one.tag.eq(Tag.WIRE),
+      one.payload.eq(port.payload),
+      one.label.eq(0),
+
+      two.tag.eq(Tag.WIRE),
+      two.payload.eq(port.payload + 1),
+      two.label.eq(0),
+    ]
+    return one, two
+
 
 assert Port.as_shape().size == WORD_WIDTH
+
 
 class Port2(_data.Struct):
   a: Port
   b: Port
 
+
 assert Port2.as_shape().size == WORD_WIDTH * 2
 
-ERASER = {
-  "tag": Tag.ERASE,
-  "payload": 0,
-  "label": 0
-}
+ERASER = {"tag": Tag.ERASE, "payload": 0, "label": 0}
 
-PORT_EMPTY = _am.Const({
+PORT_EMPTY = _am.Const(
+  {
     "tag": Tag.INVALID,
     "payload": 0,
     "label": 0,
-}, Port)
+  },
+  Port,
+)
 
 # let's say you have:
 #

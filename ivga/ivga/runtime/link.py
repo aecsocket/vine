@@ -1,14 +1,12 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
-from ivga.mem.alloc import AllocPort
-from ivga.mem.heap import HeapPort
 
 from ivga import Port, Port2, Tag, flatten
-from ivga.mem.stack import StackPort
+from ivga.mem import AllocPort, HeapPort, StackPort
 
 
-class LinkerPort(wiring.Signature):
+class LinkPort(wiring.Signature):
   def __init__(self):
     super().__init__({
       "req_link": Out(1),
@@ -16,6 +14,14 @@ class LinkerPort(wiring.Signature):
       "req_b": Out(Port),
       "done": In(1),
     })
+
+  @staticmethod
+  def link(m: Module, link, a, b):
+    m.d.comb += [
+      link.req_link.eq(True),
+      link.req_a.eq(a),
+      link.req_b.eq(b),
+    ]
 
 IDLE = "idle"
 DO_LINK = "do_link"
@@ -27,8 +33,8 @@ CONNECT_SWAP_FREE = "connect_swap_free"
 FOLLOW_FREE = "follow_free"
 
 
-class Linker(wiring.Component):
-  control: In(LinkerPort())
+class Link(wiring.Component):
+  control: In(LinkPort())
   heap: Out(HeapPort())
   alloc: Out(AllocPort())
   active: Out(StackPort(Port2))
@@ -36,7 +42,6 @@ class Linker(wiring.Component):
   def __init__(self):
     self.a = Signal(Port)
     self.b = Signal(Port)
-    self.swap_free_prev = Signal(Port)
     self.previous = Signal(Port)
     super().__init__()
     flatten(self, self.control)
@@ -65,59 +70,65 @@ class Linker(wiring.Component):
 
     return m
 
-def idle(linker: Linker, m: Module):
-  with m.If(linker.req_link):
+def idle(link: Link, m: Module):
+  with m.If(link.req_link):
     m.d.sync += [
-      linker.a.eq(linker.req_a),
-      linker.b.eq(linker.req_b),
+      link.a.eq(link.req_a),
+      link.b.eq(link.req_b),
     ]
-    do_link_(linker, m, linker.req_a, linker.req_b)
+    do_link_(link, m, link.req_a, link.req_b)
 
-def do_link_(linker: Linker, m: Module, a, b):
+def do_link_(link: Link, m: Module, a, b):
   with m.If(a.tag == Tag.WIRE):
     with m.If(b.tag == Tag.WIRE):
       # A and B are wires; follow B to the end
       # then link A and the tail of B
-      HeapPort.read(m, linker.heap, b.payload)
+      HeapPort.read(m, link.heap, b.payload)
       m.next = FOLLOW
     with m.Else():
       # A is a wire, but B isn't, so we can go straight to connecting
-      connect_(linker, m, a, b)
+      connect_(link, m, a, b)
 
   with m.Elif(b.tag == Tag.WIRE):
     # A must not be a wire; go straight to connecting
     m.d.sync += [
-      linker.a.eq(b),
-      linker.b.eq(a),
+      link.a.eq(b),
+      link.b.eq(a),
     ]
-    connect_(linker, m, b, a)
+    connect_(link, m, b, a)
 
   with m.Elif(
-    (a.tag == Tag.GRAFT | a.tag == Tag.ERASE)
-    & (b.tag == Tag.GRAFT | b.tag == Tag.ERASE)
+    ((a.tag == Tag.GRAFT) | (a.tag == Tag.ERASE))
+    & ((b.tag == Tag.GRAFT) | (b.tag == Tag.ERASE))
   ):
     # (graft|erase) >-< (graft|erase) erases each other;
     # nothing to do, since a graft is a closed net where the only port open
     # to the outside world *is* the one we're looking at right now.
     # so there's no other way for the graft to interact with the rest of the net
     # therefore it's safe to erase it
-    m.d.sync += linker.done.eq(True)
+    m.d.sync += link.done.eq(True)
     m.next = IDLE
 
   with m.Elif(
-    (a.tag == Tag.EXT_VAL | a.tag == Tag.ERASE)
-    & (b.tag == Tag.EXT_VAL | b.tag == Tag.ERASE)
+    ((a.tag == Tag.EXT_VAL) | (a.tag == Tag.ERASE))
+    & ((b.tag == Tag.EXT_VAL) | (b.tag == Tag.ERASE))
   ):
     # (extval|erase) >-< (extval|erase) - erasing an ext val is legal,
     # but might be a bad idea (e.g. erasing the IO handle).
-    m.d.sync += linker.done.eq(True)
+    m.d.sync += link.done.eq(True)
     m.next = IDLE
 
   with m.Else():
     # all other work goes on the worklist
     # TODO: active_fast/active_slow like in IVM
-    StackPort.push(m, linker.active, Port2(a, b))
-    m.d.sync += linker.done.eq(True)
+    # TODO: fault if worklist is full
+    pair = Signal(Port2)
+    m.d.comb += [
+      pair.a.eq(a),
+      pair.b.eq(b),
+    ]
+    StackPort.push(m, link.active, pair)
+    m.d.sync += link.done.eq(True)
     m.next = IDLE
 
 #   with m.Elif(
@@ -131,11 +142,11 @@ def do_link_(linker: Linker, m: Module, a, b):
 #   with m.Else():
 #     m.d.sync += Assert(False, "all tag combinations should be handled")
 
-def follow(linker: Linker, m: Module):
-  HeapPort.read(m, linker.heap, linker.b.payload)
-  with m.If(linker.heap.done):
+def follow(link: Link, m: Module):
+  HeapPort.read(m, link.heap, link.b.payload)
+  with m.If(link.heap.done):
     # fetched heap[B.payload]
-    target = Port(linker.heap.read_data)
+    target = Port(link.heap.read_data)
     with m.If(target.tag == Tag.INVALID):
       # heap[B.payload] is empty, so B is the end of the chain;
       # skip to connecting.
@@ -144,8 +155,8 @@ def follow(linker: Linker, m: Module):
       # we can't instantiate another `connect_`,
       # since both follow and connect steps use the heap.
       # so we may have to wait for another clock cycle.
-      with m.If(linker.a == linker.b):
-        connect_same_wire(linker, m, linker.a, linker.b)
+      with m.If(link.a == link.b):
+        connect_same_wire(link, m, link.a, link.b)
       with m.Else():
         m.next = CONNECT
     with m.Else():
@@ -153,65 +164,65 @@ def follow(linker: Linker, m: Module):
       # - free B.payload, wait for it to be freed, then
       # - continue `link(a, heap[B.payload])`
       #   where `previous = heap[B.payload]`
-      AllocPort.free(m, linker.alloc, linker.b.payload)
-      m.d.sync += linker.previous.eq(target)
+      AllocPort.free(m, link.alloc, link.b.payload)
+      m.d.sync += link.previous.eq(target)
       m.next = FOLLOW_FREE
 
-def connect_same_wire(linker: Linker, m: Module, a, b):
+def connect_same_wire(link: Link, m: Module, a, b):
   # A's bits compose a wire, and B has the same bits,
   # so B is the same wire as A.
   # so we just free `A.payload`, and don't do any real connecting.
-  AllocPort.free(m, linker.alloc, a.payload)
+  AllocPort.free(m, link.alloc, a.payload)
   m.next = CONNECT_FREE
 
 
-def connect_(linker: Linker, m: Module, a, b):
+def connect_(link: Link, m: Module, a, b):
   # we're done following wires
   with m.If(a == b):
-    connect_same_wire(linker, m, a, b)
+    connect_same_wire(link, m, a, b)
   with m.Else():
     # swap_target(A as Wire, B)
     # => swap(&mut heap[A.payload], B)
-    HeapPort.read(m, linker.heap, a.payload)
-    HeapPort.write(m, linker.heap, a.payload, b)
+    HeapPort.read(m, link.heap, a.payload)
+    HeapPort.write(m, link.heap, a.payload, b)
     m.next = CONNECT_SWAP
 
-def connect_free(linker: Linker, m: Module):
-  AllocPort.free(m, linker.alloc, linker.a.payload)
-  with m.If(linker.alloc.done):
-    m.d.sync += linker.done.eq(True)
+def connect_free(link: Link, m: Module):
+  AllocPort.free(m, link.alloc, link.a.payload)
+  with m.If(link.alloc.done):
+    m.d.sync += link.done.eq(True)
     m.next = IDLE
 
-def connect_swap(linker: Linker, m: Module):
-  HeapPort.read(m, linker.heap, linker.a.payload)
-  HeapPort.write(m, linker.heap, linker.a.payload, linker.b)
-  with m.If(linker.heap.done):
+def connect_swap(link: Link, m: Module):
+  HeapPort.read(m, link.heap, link.a.payload)
+  HeapPort.write(m, link.heap, link.a.payload, link.b)
+  with m.If(link.heap.done):
     # swap complete, `previous = heap[A.payload]`
-    previous = Port(linker.heap.read_data)
+    previous = Port(link.heap.read_data)
     with m.If(previous.tag == Tag.INVALID):
       # no node at A.payload's old slot, no work left
-      m.d.sync += linker.done.eq(True)
+      m.d.sync += link.done.eq(True)
       m.next = IDLE
     with m.Else():
       # free A.payload and `link(previous, b)`
       # in this cycle we only free A.payload
       # save `previous` into a register
       # cause we need to set `a = previous`
-      m.d.sync += linker.swap_free_prev.eq(previous)
-      AllocPort.free(m, linker.alloc, linker.a.payload)
+      m.d.sync += link.previous.eq(previous)
+      AllocPort.free(m, link.alloc, link.a.payload)
       m.next = CONNECT_SWAP_FREE
 
-def connect_swap_free(linker: Linker, m: Module):
-  AllocPort.free(m, linker.alloc, linker.a.payload)
-  with m.If(linker.alloc.done):
+def connect_swap_free(link: Link, m: Module):
+  AllocPort.free(m, link.alloc, link.a.payload)
+  with m.If(link.alloc.done):
     # A.payload is freed, do `link(previous, b)`
-    m.d.sync += linker.a.eq(linker.swap_free_prev)
-    do_link_(linker, m, linker.swap_free_prev, linker.b)
+    m.d.sync += link.a.eq(link.previous)
+    do_link_(link, m, link.previous, link.b)
 
-def follow_free(linker: Linker, m: Module):
-  AllocPort.free(m, linker.alloc, linker.b.payload)
-  with m.If(linker.alloc.done):
+def follow_free(link: Link, m: Module):
+  AllocPort.free(m, link.alloc, link.b.payload)
+  with m.If(link.alloc.done):
     # old intermediate wire has been freed,
     # continue `link(a, previous)`
-    m.d.sync += linker.b.eq(linker.previous)
-    do_link_(linker, m, linker.a, linker.previous)
+    m.d.sync += link.b.eq(link.previous)
+    do_link_(link, m, link.a, link.previous)

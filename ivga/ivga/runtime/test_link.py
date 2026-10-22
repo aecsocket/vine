@@ -1,4 +1,4 @@
-"""Small linker simulations: run `python -m ivga.runtime.test_linker`.
+"""Small link simulations: run `python -m ivga.runtime.test_link`.
 
 The Python heap/allocator mocks execute held requests exactly once. Delayed
 responses model waiting for arbitration, not a real shared-memory arbiter.
@@ -6,10 +6,10 @@ responses model waiting for arbitration, not a real shared-memory arbiter.
 
 from amaranth import Const
 from amaranth.sim import Simulator
-from ivga.mem.alloc import ADDR_EMPTY
-from ivga.runtime.linker import Linker
 
 from ivga import Port, Tag
+from ivga.mem.alloc import ADDR_EMPTY
+from ivga.runtime import Link
 
 PERIOD = 1e-9
 
@@ -40,7 +40,7 @@ def check_links(links, initial, expected, expected_freed, expected_heap_ops,
 
 def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
                    delay, expected_heap_writes=None):
-  dut = Linker()
+  dut = Link()
   sim = Simulator(dut)
   sim.add_clock(PERIOD)
   heap = dict(initial)
@@ -76,7 +76,7 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
 
   async def alloc_service(ctx):
     while True:
-      assert not ctx.get(dut.alloc.req_alloc), "linker should only free slots"
+      assert not ctx.get(dut.alloc.req_alloc), "link should only free slots"
       if not ctx.get(dut.alloc.req_free):
         await ctx.tick()
         continue
@@ -113,7 +113,7 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
           break
         await ctx.tick()
       else:
-        raise AssertionError("linker did not complete within 100 cycles")
+        raise AssertionError("link did not complete within 100 cycles")
 
       await ctx.tick()
       assert not ctx.get(dut.done), "done must clear after completion"
@@ -222,5 +222,5 @@ if __name__ == "__main__":
       print(f"FAIL {test.__name__}: {error}", flush=True)
     else:
       print(f"PASS {test.__name__}", flush=True)
-  assert not failures, f"{len(failures)} linker cases failed: {', '.join(failures)}"
-  print(f"Passed {len(tests) * 2} linker simulations ({len(tests)} cases, 2 response delays)")
+  assert not failures, f"{len(failures)} link cases failed: {', '.join(failures)}"
+  print(f"Passed {len(tests) * 2} link simulations ({len(tests)} cases, 2 response delays)")

@@ -15,10 +15,10 @@ from functools import partial
 from amaranth import Array, Assert, Const, Cover, Shape, Signal, signed, unsigned
 from amaranth.asserts import AnySeq
 from amaranth.hdl import Fragment
-from ivga.mem.stack import Stack
-from ivga.verify import Verify
 
 from ivga import Word
+from ivga.mem.stack import Stack
+from ivga.verify import Verify
 
 DEFAULT_SHAPE = unsigned(8)
 

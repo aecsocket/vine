@@ -1,9 +1,10 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
-from ivga.mem.heap import HeapPort
 
 from ivga import ADDR_MAX, Addr, flatten
+
+from .heap import HeapPort
 
 
 class AllocPort(wiring.Signature):
