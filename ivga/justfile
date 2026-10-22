@@ -1,0 +1,2 @@
+formal-alloc:
+  python -m ivga.mem.formal_alloc

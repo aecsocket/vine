@@ -2,7 +2,8 @@ from amaranth import *
 from amaranth.lib.memory import Memory
 from amaranth.sim import Simulator, SimulatorContext
 from ivga.mem.alloc import Alloc
-from ivga.ty import ADDR_WIDTH, SYNC, Word
+
+from ivga import ADDR_WIDTH, SYNC, Word
 
 PERIOD = 0.00_000_001 # 1ns
 CAPACITY = 4

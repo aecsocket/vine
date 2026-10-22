@@ -2,7 +2,8 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from ivga.mem.heap import HeapPort
-from ivga.ty import ADDR_WIDTH, Addr, flatten
+
+from ivga import ADDR_WIDTH, Addr, flatten
 
 
 class AllocPort(wiring.Signature):

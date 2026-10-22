@@ -1,7 +1,8 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
-from ivga.ty import Addr, Word
+
+from ivga import Addr, Word
 
 
 class HeapPort(wiring.Signature):
