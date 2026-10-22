@@ -63,6 +63,15 @@ class Stack(wiring.Component):
       mem_write.en.eq(False),
     ]
 
+    # push; don't always enable tho
+    m.d.comb += [
+      mem_write.addr.eq(self.top),
+      mem_write.data.eq(self.push_data),
+    ]
+
+    # pop; don't always enable tho
+    m.d.comb += self.pop_data.eq(mem_read.data)
+
     with m.If(self.req_push):
       push(self, m, mem_read, mem_write)
     with m.Elif(self.req_pop):
@@ -74,11 +83,7 @@ def push(stack: Stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
   with m.If(stack.full):
     m.d.sync += stack.done.eq(True)
   with m.Else():
-    m.d.comb += [
-      mem_write.en.eq(True),
-      mem_write.addr.eq(stack.top),
-      mem_write.data.eq(stack.push_data),
-    ]
+    m.d.comb += mem_write.en.eq(True)
     m.d.sync += [
       stack.top.eq(stack.top + 1),
       stack.done.eq(True),
@@ -91,7 +96,6 @@ def pop(stack: Stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
     m.d.comb += [
       mem_read.en.eq(True),
       mem_read.addr.eq(stack.top - 1),
-      stack.pop_data.eq(mem_read.data),
     ]
     m.d.sync += [
       stack.top.eq(stack.top - 1),
