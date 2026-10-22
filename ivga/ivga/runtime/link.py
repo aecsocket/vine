@@ -5,6 +5,8 @@ from amaranth.lib.wiring import In, Out
 from ivga import Port, Port2, Tag, flatten
 from ivga.mem import AllocPort, HeapPort, StackPort
 
+from .fault import FaultPort
+
 
 class LinkPort(wiring.Signature):
   def __init__(self):
@@ -38,6 +40,7 @@ class Link(wiring.Component):
   heap: Out(HeapPort())
   alloc: Out(AllocPort())
   active: Out(StackPort(Port2))
+  fault: Out(FaultPort())
 
   def __init__(self):
     self.a = Signal(Port)
@@ -121,15 +124,18 @@ def do_link_(link: Link, m: Module, a, b):
   with m.Else():
     # all other work goes on the worklist
     # TODO: active_fast/active_slow like in IVM
-    # TODO: fault if worklist is full
-    pair = Signal(Port2)
-    m.d.comb += [
-      pair.a.eq(a),
-      pair.b.eq(b),
-    ]
-    StackPort.push(m, link.active, pair)
-    m.d.sync += link.done.eq(True)
-    m.next = IDLE
+    with m.If(link.active.full):
+      # fault if active worklist is full
+      m.d.comb += link.fault.active_full.eq(True)
+    with m.Else():
+      pair = Signal(Port2)
+      m.d.comb += [
+        pair.a.eq(a),
+        pair.b.eq(b),
+      ]
+      StackPort.push(m, link.active, pair)
+      m.d.sync += link.done.eq(True)
+      m.next = IDLE
 
 #   with m.Elif(
 #     ((a.tag == Tag.COMB & b.tag == Tag.COMB) & a.label == b.label)
