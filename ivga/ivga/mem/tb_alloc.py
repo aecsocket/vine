@@ -5,9 +5,10 @@ from ivga.mem.alloc import Alloc
 from ivga.ty import ADDR_WIDTH, SYNC, Word
 
 PERIOD = 0.00_000_001 # 1ns
+CAPACITY = 4
 
 def setup():
-  dut = Alloc()
+  dut = Alloc(capacity=CAPACITY)
   m = Module()
   m.submodules.alloc = dut
 
@@ -34,28 +35,30 @@ def setup():
   sim.add_clock(PERIOD)
   return dut, sim
 
+def assert_allocated_at_(ctx: SimulatorContext, dut: Alloc, addr: int):
+  assert ctx.get(dut.done) == True
+  assert ctx.get(dut.oom) == False
+  assert ctx.get(dut.alloc_addr) == addr
+
 def test_bump_alloc():
   dut, sim = setup()
 
   async def bench(ctx: SimulatorContext):
+    assert_allocated_at = lambda addr: assert_allocated_at_(ctx, dut, addr)
     assert ctx.get(dut.done) == False
 
     # first bump alloc
     ctx.set(dut.req_alloc, True)
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
-
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 0
+    assert_allocated_at(0)
 
     # second bump alloc
     await ctx.tick()
     ctx.set(dut.req_alloc, True)
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
-
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 1
+    assert_allocated_at(1)
 
     # unset done
     await ctx.tick()
@@ -71,13 +74,13 @@ def test_alloc_free():
   dut, sim = setup()
 
   async def bench(ctx: SimulatorContext):
+    assert_allocated_at = lambda addr: assert_allocated_at_(ctx, dut, addr)
+
     # allocate
     ctx.set(dut.req_alloc, True)
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
-
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 0
+    assert_allocated_at(0)
 
     # free
     ctx.set(dut.req_free, True)
@@ -98,8 +101,7 @@ def test_alloc_free():
     # realloc completes in 3 cycles
     assert ctx.get(dut.done) == False
     await ctx.tick().repeat(2)
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 0
+    assert_allocated_at(0)
 
   sim.add_testbench(bench)
   with sim.write_vcd("obj_dir/test_alloc_free.vcd"):
@@ -109,18 +111,18 @@ def test_many_reallocs():
   dut, sim = setup()
 
   async def bench(ctx: SimulatorContext):
+    assert_allocated_at = lambda addr: assert_allocated_at_(ctx, dut, addr)
+
     # allocate twice
     ctx.set(dut.req_alloc, True)
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 0
+    assert_allocated_at(0)
 
     ctx.set(dut.req_alloc, True)
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 1
+    assert_allocated_at(1)
 
     # free addr 0
     ctx.set(dut.req_free, True)
@@ -136,21 +138,44 @@ def test_many_reallocs():
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
     await ctx.tick().repeat(2)
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 0
+    assert_allocated_at(0)
 
     # another alloc should bump alloc into 2
     ctx.set(dut.req_alloc, True)
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
-    assert ctx.get(dut.done) == True
-    assert ctx.get(dut.alloc_addr) == 2
+    assert_allocated_at(2)
 
   sim.add_testbench(bench)
   with sim.write_vcd("obj_dir/test_many_reallocs.vcd"):
+    sim.run()
+
+def test_oom():
+  dut, sim = setup()
+
+  async def bench(ctx: SimulatorContext):
+    assert_allocated_at = lambda addr: assert_allocated_at_(ctx, dut, addr)
+
+    # allocate CAPACITY times
+    for i in range(CAPACITY):
+      ctx.set(dut.req_alloc, True)
+      await ctx.tick()
+      ctx.set(dut.req_alloc, False)
+      assert_allocated_at(i)
+      await ctx.tick()
+
+    # the next alloc should OOM
+    ctx.set(dut.req_alloc, True)
+    await ctx.tick()
+    assert ctx.get(dut.done) == True
+    assert ctx.get(dut.oom) == True
+
+  sim.add_testbench(bench)
+  with sim.write_vcd("obj_dir/test_oom.vcd"):
     sim.run()
 
 
 test_bump_alloc()
 test_alloc_free()
 test_many_reallocs()
+test_oom()

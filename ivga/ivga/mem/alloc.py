@@ -32,8 +32,11 @@ class Alloc(wiring.Component):
 
   heap: Out(HeapPort())
 
-  def __init__(self):
-    self.empty = Signal(Addr)
+  def __init__(self, capacity: int):
+    assert 0 < capacity <= (1 << ADDR_WIDTH) - 1
+
+    self.capacity = capacity
+    self.empty = Signal(range(capacity + 1))
     self.free_head = Signal(Addr, init=ADDR_EMPTY)
     super().__init__()
 
@@ -59,14 +62,7 @@ class Alloc(wiring.Component):
 
 def idle(alloc: Alloc, m: Module):
   with m.If(alloc.req_alloc):
-    with m.If(alloc.free_head == ADDR_EMPTY):
-      # bump allocate
-      m.d.sync += [
-        alloc.alloc_addr.eq(alloc.empty),
-        alloc.empty.eq(alloc.empty + 1),
-        alloc.done.eq(True),
-      ]
-    with m.Else():
+    with m.If(alloc.free_head != ADDR_EMPTY):
       # reuse the free head
       # first read the value at the free head
       # e.g. free_head = 10, heap[free_head] = ?
@@ -75,6 +71,19 @@ def idle(alloc: Alloc, m: Module):
         alloc.heap.read_addr.eq(alloc.free_head),
       ]
       m.next = ALLOC_WAIT
+    with m.Elif(alloc.empty < alloc.capacity):
+      # bump allocate; we still have empty memory
+      m.d.sync += [
+        alloc.alloc_addr.eq(alloc.empty),
+        alloc.empty.eq(alloc.empty + 1),
+        alloc.done.eq(True),
+      ]
+    with m.Else():
+      # tried to bump allocate, but out of memory
+      m.d.sync += [
+        alloc.done.eq(True),
+        alloc.oom.eq(True),
+      ]
   with m.Elif(alloc.req_free):
     # set `heap[alloc.free_addr]` to the current free head
     # and set `alloc.free_head` to `alloc.free_addr`
