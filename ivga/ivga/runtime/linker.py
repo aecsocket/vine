@@ -112,11 +112,17 @@ def follow(linker: Linker, m: Module):
     # fetched heap[B.payload]
     target = Port(linker.heap.read_data)
     with m.If(target.tag == Tag.INVALID):
-      # heap[B.payload] is empty, skip to connecting
+      # heap[B.payload] is empty, so B is the end of the chain;
+      # skip to connecting.
+      #
+      # reimpl a bit of `connect_` manually, because
       # we can't instantiate another `connect_`,
-      # since both follow and connect steps use the alloc/heap.
-      # so we have to wait for another clock cycle.
-      m.next = CONNECT
+      # since both follow and connect steps use the heap.
+      # so we may have to wait for another clock cycle.
+      with m.If(linker.a == linker.b):
+        connect_same_wire(linker, m, linker.a, linker.b)
+      with m.Else():
+        m.next = CONNECT
     with m.Else():
       # heap[B.payload] has a port, so we
       # - free B.payload, wait for it to be freed, then
@@ -126,14 +132,18 @@ def follow(linker: Linker, m: Module):
       m.d.sync += linker.previous.eq(target)
       m.next = FOLLOW_FREE
 
+def connect_same_wire(linker: Linker, m: Module, a, b):
+  # A's bits compose a wire, and B has the same bits,
+  # so B is the same wire as A.
+  # so we just free `A.payload`, and don't do any real connecting.
+  AllocPort.free(m, linker.alloc, a.payload)
+  m.next = CONNECT_FREE
+
+
 def connect_(linker: Linker, m: Module, a, b):
   # we're done following wires
   with m.If(a == b):
-    # A's bits compose a wire, and B has the same bits,
-    # so B is the same wire as A.
-    # so we just free `A.payload`, and don't do any real connecting.
-    AllocPort.free(m, linker.alloc, a.payload)
-    m.next = CONNECT_FREE
+    connect_same_wire(linker, m, a, b)
   with m.Else():
     # swap_target(A as Wire, B)
     # => swap(&mut heap[A.payload], B)
