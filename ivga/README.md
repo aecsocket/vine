@@ -50,3 +50,9 @@ apparently that idea I had last night, they already thought about shared immutab
 I decided I didn't like verilog, and I knew about Amaranth I saw a guy on youtube using it, so I was like what the hell let's try it. I gotta say it's a lot more readable, and it takes care of a lot more of the edge cases/reset/clock/etc. stuff, so I'm sticking with this. its very nice.
 
 I got the heap/alloc/link (partially) reimplemented in Amaranth, but I'm worried about testing. I know I have testbenches but thats lowk not enough. I started to look into formal verification instead, I think I can get AI to autogenerate a bunch of formal verification test cases for my alloc module.
+
+I GOT THE LINKER WORKING! I had no clue what the old code was doing, so I sat down, made a new file, and decided to oneshot the new impl myself. And it worked almost perfectly on the first try! I just forgot to check if wire A == wire B.
+
+Now for the worklist.. I think I need a stack for this. How do we handle worklist stack overflows? Shit... uh idk. We need maybe "CPU registers" or fault registers so if we overflow we stop all computation? And hard reset? Idk really.
+
+This gets me thinking... CPUs have faults and fault handlers. So you can go: get a segmentation fault, and it goes into the interrupt descriptor table (IDT), finds the kernel's IDT entry for a segfault, and runs that code. if *that* interrupt segfaults, then it triple faults and the system hard resets. Could we have interrupt handlers in our interaction net hardware? is that a good idea? Maybe if you store a port/net in a table? I don't really know... Could use it for worklist overflow and for out of memory?

@@ -4,7 +4,8 @@ from amaranth.lib.wiring import In, Out
 from ivga.mem.alloc import AllocPort
 from ivga.mem.heap import HeapPort
 
-from ivga import Port, Tag, flatten
+from ivga import Port, Port2, Tag, flatten
+from ivga.mem.stack import StackPort
 
 
 class LinkerPort(wiring.Signature):
@@ -30,6 +31,7 @@ class Linker(wiring.Component):
   control: In(LinkerPort())
   heap: Out(HeapPort())
   alloc: Out(AllocPort())
+  active: Out(StackPort(Port2))
 
   def __init__(self):
     self.a = Signal(Port)
@@ -91,8 +93,8 @@ def do_link_(linker: Linker, m: Module, a, b):
     connect_(linker, m, b, a)
 
   with m.Elif(
-    ((a.tag == Tag.GRAFT) | (a.tag == Tag.ERASE))
-    & ((b.tag == Tag.GRAFT) | (b.tag == Tag.ERASE))
+    (a.tag == Tag.GRAFT | a.tag == Tag.ERASE)
+    & (b.tag == Tag.GRAFT | b.tag == Tag.ERASE)
   ):
     # (graft|erase) >-< (graft|erase) erases each other;
     # nothing to do, since a graft is a closed net where the only port open
@@ -102,9 +104,32 @@ def do_link_(linker: Linker, m: Module, a, b):
     m.d.sync += linker.done.eq(True)
     m.next = IDLE
 
-  # TODO other cases
+  with m.Elif(
+    (a.tag == Tag.EXT_VAL | a.tag == Tag.ERASE)
+    & (b.tag == Tag.EXT_VAL | b.tag == Tag.ERASE)
+  ):
+    # (extval|erase) >-< (extval|erase) - erasing an ext val is legal,
+    # but might be a bad idea (e.g. erasing the IO handle).
+    m.d.sync += linker.done.eq(True)
+    m.next = IDLE
+
   with m.Else():
-    m.d.sync += Assert(False, "all tag combinations should be handled")
+    # all other work goes on the worklist
+    # TODO: active_fast/active_slow like in IVM
+    StackPort.push(m, linker.active, Port2(a, b))
+    m.d.sync += linker.done.eq(True)
+    m.next = IDLE
+
+#   with m.Elif(
+#     ((a.tag == Tag.COMB & b.tag == Tag.COMB) & a.label == b.label)
+#     | ((a.tag == Tag.EXT_FN & b.tag == Tag.EXT_FN) & a.label == b.label)
+#   ):
+#     # N >-< N where nodes N have the same label
+#
+#
+#   # TODO other cases
+#   with m.Else():
+#     m.d.sync += Assert(False, "all tag combinations should be handled")
 
 def follow(linker: Linker, m: Module):
   HeapPort.read(m, linker.heap, linker.b.payload)

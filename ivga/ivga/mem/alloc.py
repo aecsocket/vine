@@ -3,7 +3,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from ivga.mem.heap import HeapPort
 
-from ivga import ADDR_WIDTH, Addr, flatten
+from ivga import ADDR_MAX, Addr, flatten
 
 
 class AllocPort(wiring.Signature):
@@ -33,21 +33,20 @@ IDLE = "idle"
 ALLOC_WAIT = "alloc_wait"
 FREE_WAIT = "free_wait"
 
-ADDR_EMPTY = Const((1 << ADDR_WIDTH) - 1, Addr)
+ADDR_EMPTY = Const(ADDR_MAX, Addr)
 
 class Alloc(wiring.Component):
   control: In(AllocPort())
   heap: Out(HeapPort())
 
   def __init__(self, capacity: int):
-    assert 0 < capacity <= (1 << ADDR_WIDTH) - 1
+    assert 0 < capacity <= ADDR_MAX
 
     self.capacity = capacity
     self.empty = Signal(range(capacity + 1))
     self.free_head = Signal(Addr, init=ADDR_EMPTY)
     self.free_addr_pending = Signal(Addr)
     super().__init__()
-
     flatten(self, self.control)
 
   def elaborate(self, platform):

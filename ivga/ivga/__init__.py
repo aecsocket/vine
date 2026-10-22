@@ -10,6 +10,7 @@ WORD_WIDTH = 64
 Word = _am.unsigned(WORD_WIDTH)
 
 ADDR_WIDTH = 10
+ADDR_MAX = (1 << ADDR_WIDTH) - 1
 Addr = _am.unsigned(ADDR_WIDTH)
 
 # ports
@@ -28,6 +29,12 @@ class Port(_data.Struct):
     label: _am.unsigned(16)
 
 assert Port.as_shape().size == WORD_WIDTH
+
+class Port2(_data.Struct):
+  a: Port
+  b: Port
+
+assert Port2.as_shape().size == WORD_WIDTH * 2
 
 ERASER = {
   "tag": Tag.ERASE,
