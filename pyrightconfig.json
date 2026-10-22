@@ -1,0 +1,25 @@
+{
+  "reportInvalidTypeForm": "none",
+  "reportWildcardImportFromLibrary": "none",
+  "executionEnvironments": [
+    {
+      "root": "ivga",
+      "reportGeneralTypeIssues": "none",
+      "reportCallIssue": "none",
+      "reportAttributeAccessIssue": "none",
+      "reportUninitializedInstanceVariable": "none",
+      "reportInconsistentConstructor": "none",
+      "reportMissingTypeStubs": "none",
+      "reportMissingParameterType": "none",
+      "reportUnknownArgumentType": "none",
+      "reportUnknownLambdaType": "none",
+      "reportUnknownMemberType": "none",
+      "reportUnknownParameterType": "none",
+      "reportUnknownVariableType": "none",
+      "reportUnannotatedClassAttribute": "none",
+      "reportUnusedParameter": "none",
+      "reportAny": "none",
+      "reportImplicitStringConcatenation": "none"
+    }
+  ]
+}

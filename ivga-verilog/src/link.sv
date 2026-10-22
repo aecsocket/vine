@@ -135,6 +135,11 @@ always_ff @(posedge clk) begin : cycle
             if (heap.read_data === PORT_EMPTY) begin
                 // the wire points to an empty slot,
                 // which will be populated later as we keep interacting.
+                heap.read_addr <=
+
+                //
+                //
+                //
                 // so we need to write `b` into that slot,
                 // for future interactions to work.
                 heap.write_enable <= 1'b1;
@@ -153,6 +158,8 @@ always_ff @(posedge clk) begin : cycle
                 state <= WAIT_FREE_AND_LINK;
             end
         end
+
+        B_EMPTY_
         default: begin end
     endcase
 end
