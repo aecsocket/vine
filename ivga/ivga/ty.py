@@ -37,3 +37,26 @@ PORT_EMPTY = Const({
     "payload": 0,
     "label": 0,
 }, Port)
+
+# let's say you have:
+#
+#   class MyModulePort(wiring.Signature):
+#     def __init__(self):
+#       super().__init__({
+#         "some_signal": In(1),
+#         "some_signal_2": In(1),
+#       })
+#
+#   class MyModule(wiring.Component);
+#     control: In(MyModulePort())
+#
+# if you want to access `some_signal`, you have to go through
+# `my_module.control.some_signal` every time - that's really annoying and verbose.
+#
+# if you run this after your module's super init, then you can just do:
+#
+#   my_module.some_signal
+#   my_module.some_signal_2
+def flatten(it, control):
+  for name in control.signature.members:
+    setattr(it, name, getattr(control, name))

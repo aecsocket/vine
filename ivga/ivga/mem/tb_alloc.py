@@ -36,9 +36,9 @@ def setup():
   return dut, sim
 
 def assert_allocated_at_(ctx: SimulatorContext, dut: Alloc, addr: int):
-  assert ctx.get(dut.done) == True
-  assert ctx.get(dut.oom) == False
-  assert ctx.get(dut.alloc_addr) == addr
+  assert ctx.get(dut.control.done) == True
+  assert ctx.get(dut.control.oom) == False
+  assert ctx.get(dut.control.alloc_addr) == addr
 
 def test_bump_alloc():
   dut, sim = setup()
