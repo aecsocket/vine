@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from pathlib import Path
 
 from amaranth import *
@@ -20,7 +21,11 @@ class Verify:
     with self.m.If(self.cycle < cycles):
       self.m.d.sync += self.cycle.eq(self.cycle + 1)
 
-  def prove(self, name: str, depth: int = 6):
+  def prove(self, name: str | None = None, depth: int = 6):
+    # get the verification test name if unspecified
+    if name is None:
+      name = sys._getframe(1).f_code.co_name  # pyright: ignore[reportPrivateUsage]
+
     # make the Yosys IL and write it to a file
     output_dir = Path(__file__).resolve().parent.parent / "obj_dir" / "verify" / name
     output_dir.mkdir(parents=True, exist_ok=True)
