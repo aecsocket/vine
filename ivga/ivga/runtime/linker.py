@@ -19,6 +19,7 @@ class LinkerPort(wiring.Signature):
 IDLE = "idle"
 DO_LINK = "do_link"
 FOLLOW = "follow"
+CONNECT = "connect"
 CONNECT_FREE = "connect_free"
 CONNECT_SWAP = "connect_swap"
 CONNECT_SWAP_FREE = "connect_swap_free"
@@ -49,6 +50,8 @@ class Linker(wiring.Component):
         do_link_(self, m, self.a, self.b)
       with m.State(FOLLOW):
         follow(self, m)
+      with m.State(CONNECT):
+        connect_(self, m, self.a, self.b)
       with m.State(CONNECT_FREE):
         connect_free(self, m)
       with m.State(CONNECT_SWAP):
@@ -110,7 +113,10 @@ def follow(linker: Linker, m: Module):
     target = Port(linker.heap.read_data)
     with m.If(target.tag == Tag.INVALID):
       # heap[B.payload] is empty, skip to connecting
-      connect_(linker, m, linker.a, linker.b)
+      # we can't instantiate another `connect_`,
+      # since both follow and connect steps use the alloc/heap.
+      # so we have to wait for another clock cycle.
+      m.next = CONNECT
     with m.Else():
       # heap[B.payload] has a port, so we
       # - free B.payload, wait for it to be freed, then

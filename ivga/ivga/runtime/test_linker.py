@@ -6,11 +6,10 @@ responses model waiting for arbitration, not a real shared-memory arbiter.
 
 from amaranth import Const
 from amaranth.sim import Simulator
-
-from ivga import Port, Tag
 from ivga.mem.alloc import ADDR_EMPTY
 from ivga.runtime.linker import Linker
 
+from ivga import Port, Tag
 
 PERIOD = 1e-9
 
