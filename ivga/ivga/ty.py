@@ -17,7 +17,9 @@ class Tag(enum.Enum, shape=3):
     WIRE = 1
     GRAFT = 2
     ERASE = 3
+    EXT_VAL = 4
     COMB = 5
+    EXT_FN = 6
 
 class Port(data.Struct):
     tag: Tag

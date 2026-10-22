@@ -22,13 +22,15 @@ def setup():
   m.submodules.memory = memory
 
   m.d.comb += [
-    read.en.eq(dut.heap.read_enable),
-    read.addr.eq(dut.heap.read_addr),
+    read.en.eq(dut.heap.read),
+    read.addr.eq(dut.heap.addr),
     dut.heap.read_data.eq(read.data),
 
-    write.en.eq(dut.heap.write_enable),
-    write.addr.eq(dut.heap.write_addr),
+    write.en.eq(dut.heap.write),
+    write.addr.eq(dut.heap.addr),
     write.data.eq(dut.heap.write_data),
+
+    dut.heap.done.eq(True),
   ]
 
   sim = Simulator(m)
@@ -36,9 +38,9 @@ def setup():
   return dut, sim
 
 def assert_allocated_at_(ctx: SimulatorContext, dut: Alloc, addr: int):
-  assert ctx.get(dut.control.done) == True
-  assert ctx.get(dut.control.oom) == False
-  assert ctx.get(dut.control.alloc_addr) == addr
+  assert ctx.get(dut.done) == True
+  assert ctx.get(dut.oom) == False
+  assert ctx.get(dut.alloc_addr) == addr
 
 def test_bump_alloc():
   dut, sim = setup()
@@ -98,9 +100,9 @@ def test_alloc_free():
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
 
-    # realloc completes in 3 cycles
+    # realloc completes in 2 cycles
     assert ctx.get(dut.done) == False
-    await ctx.tick().repeat(2)
+    await ctx.tick()
     assert_allocated_at(0)
 
   sim.add_testbench(bench)
@@ -137,7 +139,7 @@ def test_many_reallocs():
     ctx.set(dut.req_alloc, True)
     await ctx.tick()
     ctx.set(dut.req_alloc, False)
-    await ctx.tick().repeat(2)
+    await ctx.tick()
     assert_allocated_at(0)
 
     # another alloc should bump alloc into 2
