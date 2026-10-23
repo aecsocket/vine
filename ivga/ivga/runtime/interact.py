@@ -2,7 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from ivga import Port, Tag, flatten
+from ivga import Port, Stat, Tag, flatten
 
 from .link import LinkPort
 
@@ -14,6 +14,9 @@ class InteractPort(wiring.Signature):
       "req_a": Out(Port),
       "req_b": Out(Port),
       "done": In(1),
+      # stats
+      "stat_annihilate": In(Stat),
+      "stat_reset": Out(1),
     })
 
 IDLE = "idle"
@@ -80,5 +83,8 @@ def annihilate_2(interact: Interact, m: Module):
   LinkPort.link(m, interact.link, a2, b2)
   with m.If(interact.link.done):
     # a2 >-< b2 linked
-    m.d.sync += interact.done.eq(True)
+    m.d.sync += [
+      interact.done.eq(True),
+      interact.stat_annihilate.eq(interact.stat_annihilate + 1),
+    ]
     m.next = IDLE

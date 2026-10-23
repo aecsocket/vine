@@ -2,7 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from ivga import ADDR_MAX, Addr, flatten
+from ivga import ADDR_MAX, Addr, Stat, flatten
 
 from .heap import HeapPort
 
@@ -17,8 +17,8 @@ class AllocPort(wiring.Signature):
       "done": In(1),
       "oom": In(1),
       # stats
-      "stat_allocs": In(32),
-      "stat_frees": In(32),
+      "stat_allocs": In(Stat),
+      "stat_frees": In(Stat),
       "stat_peak": In(Addr),
       "stat_reset": Out(1),
     })
@@ -76,6 +76,7 @@ class Alloc(wiring.Component):
       m.d.sync += [
         self.stat_allocs.eq(0),
         self.stat_frees.eq(0),
+        self.stat_peak.eq(0),
       ]
     with m.If(self.empty > self.stat_peak):
       m.d.sync += self.stat_peak.eq(self.empty)

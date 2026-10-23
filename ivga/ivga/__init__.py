@@ -13,6 +13,9 @@ ADDR_WIDTH = 10
 ADDR_MAX = (1 << ADDR_WIDTH) - 1
 Addr = _am.unsigned(ADDR_WIDTH)
 
+# hardware statistics counter (e.g. num of allocs/frees)
+STAT_WIDTH = 32
+Stat = _am.unsigned(STAT_WIDTH)
 
 # ports
 class Tag(_enum.Enum, shape=3):

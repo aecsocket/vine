@@ -62,3 +62,16 @@ the grafting scares me. external IO scares me.
 ## 23 Oct
 
 got my arty a7 artix-7 100T today, been trying to program it. seems simple enough, had to install vivado which eh whatever.
+
+implemented alloc/free statistics hardware registers, want to add them for more stuff like erases/combs/grafts/etc. and output them to a host so I can see more detailed info.
+one thing thats really interesting is how like, I actually understand what a CPU register is physically now. its actually a piece of hardware on the CPU which electrically adds when like the timestamp counter increments or an instruction is performed. i know thats obvious thats literally comp sci 101 but its like, oh *that's* how it works in silicon.
+
+hmm for the other hardware counters, like the number of erases, we have a little issue. we increment it in 2 places: the link module and the interact module. (tbf maybe they should just be the same module? im not sure tbh. i think maybe yeah. idk.)
+anyways assuming we keep it split, then the link needs to add a count, and the interact needs to add an erase count. we can do this by either:
+- arbitrating a request between the 2 to increment count
+  - thats lowk dumb we dont want to stop the fsm because of waiting for a counter req
+- storing TWO counters, one for the interact and one for the linker, then the final `stat_erase` is combinatorially eq to `link.stat_erase + interact.stat_erase`
+
+i think the 2nd approach makes more sense, but we have to dedicate another 64 bits for the counter. (or acc we can use smaller registers)
+
+WAIT i actually might be completely wrong. linking only erases, interactions may annihilate. just read the IVM source, yes that looks right. ok so we dont have to worry about this yippee. I confused erasure for annihilation

@@ -2,7 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from ivga import Port, Port2, Tag, flatten
+from ivga import Port, Port2, Stat, Tag, flatten
 from ivga.mem import AllocPort, HeapPort, StackPort
 
 from .fault import FaultPort
@@ -15,6 +15,9 @@ class LinkPort(wiring.Signature):
       "req_a": Out(Port),
       "req_b": Out(Port),
       "done": In(1),
+      # stats
+      "stat_erase": In(Stat),
+      "stat_reset": Out(1),
     })
 
   @staticmethod
@@ -109,7 +112,10 @@ def do_link_(link: Link, m: Module, a, b):
     # to the outside world *is* the one we're looking at right now.
     # so there's no other way for the graft to interact with the rest of the net
     # therefore it's safe to erase it
-    m.d.sync += link.done.eq(True)
+    m.d.sync += [
+      link.done.eq(True),
+      link.stat_erase.eq(link.stat_erase + 1),
+    ]
     m.next = IDLE
 
   with m.Elif(
@@ -118,7 +124,10 @@ def do_link_(link: Link, m: Module, a, b):
   ):
     # (extval|erase) >-< (extval|erase) - erasing an ext val is legal,
     # but might be a bad idea (e.g. erasing the IO handle).
-    m.d.sync += link.done.eq(True)
+    m.d.sync += [
+      link.done.eq(True),
+      link.stat_erase.eq(link.stat_erase + 1),
+    ]
     m.next = IDLE
 
   with m.Else():

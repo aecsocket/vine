@@ -3,7 +3,11 @@
 Heap/allocator mocks execute held requests once, with delayed responses.
 The worklist is a real Stack with backing Memory. A test-only supervisor
 latches overflow events and feeds halt back; the caller stops submitting work.
+VCDs are written to build/runtime/test_link, one per test and response delay.
 """
+
+import sys
+from pathlib import Path
 
 from amaranth import Const, Module, Signal
 from amaranth.sim import Simulator
@@ -15,6 +19,7 @@ from ivga.runtime import Link
 
 PERIOD = 1e-9
 PORT_BITS = Port.as_shape().size
+OUTPUT_DIR = Path(__file__).resolve().parents[2] / "build" / "runtime" / "test_link"
 
 
 def port(tag, payload=0, label=0):
@@ -36,12 +41,14 @@ POISON = port(Tag.EXT_FN)
 def check_links(links, initial, expected, expected_freed, expected_heap_ops,
                 expected_heap_writes=None, *, expected_active=(), worklist_depth=4,
                 expect_overflow=False):
+  test_name = sys._getframe(1).f_code.co_name  # pyright: ignore[reportPrivateUsage]
   failures = []
   for delay in (1, 3):
     try:
       simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
                      delay, expected_heap_writes, expected_active=expected_active,
-                     worklist_depth=worklist_depth, expect_overflow=expect_overflow)
+                     worklist_depth=worklist_depth, expect_overflow=expect_overflow,
+                     trace_name=test_name)
     except AssertionError as error:
       failures.append(f"delay={delay}: {error}")
   assert not failures, "; ".join(failures)
@@ -49,8 +56,12 @@ def check_links(links, initial, expected, expected_freed, expected_heap_ops,
 
 def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
                    delay, expected_heap_writes=None, *, expected_active=(),
-                   worklist_depth=4, expect_overflow=False):
+                   worklist_depth=4, expect_overflow=False, trace_name="simulate_links"):
   dut = Link()
+  # make sure stat signals are kept in the final vcd
+  for signal in (dut.stat_erase,):
+    signal.attrs["keep"] = 1
+
   active = Stack(Port2, depth=worklist_depth)
   m = Module()
   m.submodules.link = dut
@@ -211,7 +222,9 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
   sim.add_testbench(heap_service, background=True)
   sim.add_testbench(alloc_service, background=True)
   sim.add_testbench(bench)
-  sim.run()
+  OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+  with sim.write_vcd(str(OUTPUT_DIR / f"{trace_name}_delay_{delay}.vcd")):
+    sim.run()
 
 
 def test_erase_pair():
