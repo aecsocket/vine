@@ -7,6 +7,7 @@ from amaranth.back import rtlil
 
 from ivga import SYNC
 
+OUTPUT_DIR = Path("build") / "verify"
 DESIGN_IL = "design.il"
 DESIGN_SMT2 = "design.smt2"
 
@@ -27,7 +28,7 @@ class Verify:
       name = sys._getframe(1).f_code.co_name  # pyright: ignore[reportPrivateUsage]
 
     # make the Yosys IL and write it to a file
-    output_dir = Path(__file__).resolve().parent.parent / "obj_dir" / "verify" / name
+    output_dir = Path(__file__).resolve().parent.parent.parent / OUTPUT_DIR / name
     output_dir.mkdir(parents=True, exist_ok=True)
     il = rtlil.convert(self.m, name="top", ports=[self.domain.clk])
     _ = (output_dir / DESIGN_IL).write_text(il)

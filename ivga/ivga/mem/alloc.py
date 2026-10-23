@@ -16,6 +16,11 @@ class AllocPort(wiring.Signature):
       "alloc_addr": In(Addr),
       "done": In(1),
       "oom": In(1),
+      # stats
+      "stat_allocs": In(32),
+      "stat_frees": In(32),
+      "stat_peak": In(Addr),
+      "stat_reset": Out(1),
     })
 
   @staticmethod
@@ -66,6 +71,15 @@ class Alloc(wiring.Component):
       with m.State(FREE_WAIT):
         free_wait(self, m)
 
+    # stats
+    with m.If(self.stat_reset):
+      m.d.sync += [
+        self.stat_allocs.eq(0),
+        self.stat_frees.eq(0),
+      ]
+    with m.If(self.empty > self.stat_peak):
+      m.d.sync += self.stat_peak.eq(self.empty)
+
     return m
 
 def idle(alloc: Alloc, m: Module):
@@ -83,6 +97,7 @@ def idle(alloc: Alloc, m: Module):
         alloc.alloc_addr.eq(alloc.empty),
         alloc.empty.eq(alloc.empty + 1),
         alloc.done.eq(True),
+        alloc.stat_allocs.eq(alloc.stat_allocs + 1),
       ]
 
     with m.Else():
@@ -109,6 +124,7 @@ def alloc_wait(alloc: Alloc, m: Module):
       alloc.alloc_addr.eq(alloc.free_head),
       alloc.free_head.eq(alloc.heap.read_data),
       alloc.done.eq(True),
+      alloc.stat_allocs.eq(alloc.stat_allocs + 1),
     ]
     m.next = IDLE
 
@@ -119,6 +135,7 @@ def free_wait(alloc: Alloc, m: Module):
   with m.If(alloc.heap.done):
     m.d.sync += [
       alloc.free_head.eq(alloc.free_addr_pending),
-      alloc.done.eq(True)
+      alloc.done.eq(True),
+      alloc.stat_frees.eq(alloc.stat_frees + 1),
     ]
     m.next = IDLE

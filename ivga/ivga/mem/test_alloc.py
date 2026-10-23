@@ -20,6 +20,10 @@ POISON = 0xDEAD_BEEF
 
 def setup(capacity=4, cycles=5):
   dut = Alloc(capacity=capacity)
+  # make sure stat signals are kept in the final vcd
+  for signal in (dut.stat_allocs, dut.stat_frees, dut.stat_peak):
+    signal.attrs["keep"] = 1
+
   verify = Verify(dut, cycles=cycles)
   verify.m.d.comb += [
     dut.req_alloc.eq(False),

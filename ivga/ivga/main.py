@@ -1,6 +1,6 @@
 import argparse
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from amaranth.build.run import LocalBuildProducts
 from amaranth_boards.arty_a7 import ArtyA7_100Platform
@@ -22,17 +22,17 @@ def main():
   _ = build.add_argument(
     "--program",
     action="store_true",
-    help="Upload the built bitstream to the FPGA"
+    help="Upload the built bitstream to the FPGA",
   )
 
   _ = subparsers.add_parser(
     "util",
-    help="See utilization report (RAM usage etc.) of the built design"
+    help="See utilization report (RAM usage etc.) of the built design",
   )
 
   _ = subparsers.add_parser(
     "program",
-    help="Upload the built bitstream to the FPGA"
+    help="Upload the built bitstream to the FPGA",
   )
 
   args = parser.parse_args()
