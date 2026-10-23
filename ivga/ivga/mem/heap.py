@@ -1,5 +1,6 @@
 from amaranth import *
 from amaranth.lib import wiring
+from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
 
 from ivga import Addr, Word
@@ -30,3 +31,10 @@ class HeapPort(wiring.Signature):
       heap.addr.eq(addr),
       heap.write_data.eq(data),
     ]
+
+def make_heap():
+  return Memory(
+    shape=Word,
+    depth=1024,
+    init=[]
+  )
