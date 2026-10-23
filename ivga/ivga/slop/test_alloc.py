@@ -1,4 +1,4 @@
-"""Allocator proofs: run `python -m ivga.mem.test_alloc`.
+"""Allocator proofs: run `python -m ivga.slop.test_alloc`.
 
 Scripted tests check timing and free-list behavior against a Python oracle.
 The symbolic bump test checks every allocation-request sequence with no frees.

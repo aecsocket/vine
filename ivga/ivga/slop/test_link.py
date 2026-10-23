@@ -1,4 +1,4 @@
-"""Link simulations: run `python -m ivga.runtime.test_link`.
+"""Link simulations: run `python -m ivga.slop.test_link`.
 
 Heap/allocator mocks execute held requests once, with delayed responses.
 The worklist is a real Stack with backing Memory. A test-only supervisor

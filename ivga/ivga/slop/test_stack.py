@@ -1,4 +1,4 @@
-"""Stack proofs: run `python -m ivga.mem.test_stack`.
+"""Stack proofs: run `python -m ivga.slop.test_stack`.
 
 Requests are sampled on each edge, including held and simultaneous requests.
 Push has priority; overflow/underflow acknowledge without changing the stack.
