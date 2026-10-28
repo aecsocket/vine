@@ -7,7 +7,7 @@ from ivga import ADDR_MAX, Addr, Stat, flatten
 
 from .heap import HeapPort
 
-LANES = 4
+LANES = 8
 
 class AllocPort(wiring.Signature):
   """
