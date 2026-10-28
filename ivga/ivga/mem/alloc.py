@@ -13,15 +13,14 @@ class AllocPort(wiring.Signature):
   """
   # Operations
 
-  - `req_alloc(n)`: request to allocate `n` words on the heap.
-    Raises `done` when done; if enough memory was available for all `n` words,
-    `alloc_addrs[n:]` holds the addresses of allocated words. The order of
-    addresses you get back is unspecified; all other indices in `alloc_addrs`
-    are unspecified.
+  - `req_alloc(n)`: allocate `n` words on the heap.
+    If enough memory was available for all `n` words, `alloc_addrs[n:]` holds
+    the addresses of allocated words.
+    The order of addresses you get back is unspecified; all other indices in
+    `alloc_addrs` are unspecified.
     Otherwise, raises `oom` and does not allocate any memory.
 
-  - `req_free(n)`: request to free `n` words at addresses `free_addrs[0:n]`.
-    Raises `done` when done.
+  - `req_free(n)`: free `n` words at addresses `free_addrs[0:n]`.
   """
 
   def __init__(self):

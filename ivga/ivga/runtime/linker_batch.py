@@ -6,12 +6,12 @@ from ivga.mem.alloc import AllocPort
 from ivga.mem.heap import HeapPort
 from ivga.mem.stack import StackPort
 from ivga.runtime.fault import FaultPort
-from ivga.runtime.link import Link
+from ivga.runtime.linker import Linker
 
 from ivga import Port, Port2, Stat, flatten
 
 
-class LinkBatchPort(wiring.Signature):
+class LinkerBatchPort(wiring.Signature):
   def __init__(self, batch: int):
     super().__init__({
       "req_link": Out(range(batch + 1)),
@@ -31,12 +31,12 @@ class LinkBatchPort(wiring.Signature):
       link_batch.req_b.eq(b),
     ]
 
-class LinkBatch(wiring.Component):
+class LinkerBatch(wiring.Component):
   def __init__(self, batch: int):
     assert batch > 0
 
     super().__init__({
-      "control": In(LinkBatchPort(batch)),
+      "control": In(LinkerBatchPort(batch)),
       "heap": Out(HeapPort()),
       "alloc": Out(AllocPort()),
       "active": Out(StackPort(Port2)),
@@ -50,7 +50,7 @@ class LinkBatch(wiring.Component):
 
     linkers = []
     for i in range(self.batch):
-      m.submodules[f"linker_{i}"] = linker = Link()
+      m.submodules[f"linker_{i}"] = linker = Linker()
       linkers.append(linker)
 
     for i, linker in enumerate(linkers):

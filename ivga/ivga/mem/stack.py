@@ -3,11 +3,23 @@ from amaranth.lib import wiring
 from amaranth.lib.memory import Memory, ReadPort, WritePort
 from amaranth.lib.wiring import In, Out
 
-from ivga import flatten
+from ivga import Word, flatten
 
 
 class StackPort(wiring.Signature):
+  """
+  # Operations
+
+  - `req_push()`: push `push_data` onto the top of the stack.
+    Must only be raised if `~full`.
+
+  - `req_pop()`: pop the last value off the stack and place it into `pop_data`.
+    Must only be raised if `~empty`.
+  """
+
   def __init__(self, shape):
+    assert Shape.cast(shape).width == Shape.cast(Word).width
+
     super().__init__({
       "req_push": Out(1),
       "push_data": Out(shape),
@@ -34,6 +46,7 @@ class StackPort(wiring.Signature):
 class Stack(wiring.Component):
   def __init__(self, shape, depth: int):
     assert depth > 0
+    assert Shape.cast(shape).width == Shape.cast(Word).width
 
     self.shape = shape
     self.depth = depth

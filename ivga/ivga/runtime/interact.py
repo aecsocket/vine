@@ -6,7 +6,7 @@ from ivga.mem.alloc import AllocPort
 
 from ivga import Addr, Port, Stat, Tag, flatten
 
-from .link import LinkPort
+from .linker import LinkerPort
 
 
 class InteractPort(wiring.Signature):
@@ -32,7 +32,7 @@ COMMUTE_ALLOC = "commute_alloc"
 
 class Interact(wiring.Component):
   control: In(InteractPort())
-  link: Out(LinkPort())
+  linker: Out(LinkerPort())
   alloc: Out(AllocPort())
 
   def __init__(self):
@@ -85,7 +85,7 @@ def do_interact_(interact: Interact, m: Module, a, b):
     # annihilate each other
     a1, _ = Port.aux(m, a)
     b1, _ = Port.aux(m, b)
-    LinkPort.link(m, interact.link, a1, b1)
+    LinkerPort.link(m, interact.linker, a1, b1)
     m.next = ANNIHILATE_1
 
   with m.Elif(
@@ -103,24 +103,24 @@ def do_interact_(interact: Interact, m: Module, a, b):
     # becomes
     # (Erase >-< B1, Erase >-< B2)
     b1, _ = Port.aux(m, b)
-    LinkPort.link(m, interact.link, a, b1)
+    LinkerPort.link(m, interact.linker, a, b1)
     m.next = COPY_1
 
 
 def annihilate_1(interact: Interact, m: Module):
   a1, a2 = Port.aux(m, interact.a)
   b1, b2 = Port.aux(m, interact.b)
-  LinkPort.link(m, interact.link, a1, b1)
-  with m.If(interact.link.done):
+  LinkerPort.link(m, interact.linker, a1, b1)
+  with m.If(interact.linker.done):
     # a1 >-< b1 linked
-    LinkPort.link(m, interact.link, a2, b2)
+    LinkerPort.link(m, interact.linker, a2, b2)
     m.next = ANNIHILATE_2
 
 def annihilate_2(interact: Interact, m: Module):
   _, a2 = Port.aux(m, interact.a)
   _, b2 = Port.aux(m, interact.b)
-  LinkPort.link(m, interact.link, a2, b2)
-  with m.If(interact.link.done):
+  LinkerPort.link(m, interact.linker, a2, b2)
+  with m.If(interact.linker.done):
     # a2 >-< b2 linked
     m.d.sync += [
       interact.done.eq(True),
@@ -130,16 +130,16 @@ def annihilate_2(interact: Interact, m: Module):
 
 def copy_1(interact: Interact, m: Module):
   b1, b2 = Port.aux(m, interact.b)
-  LinkPort.link(m, interact.link, interact.a, b1)
-  with m.If(interact.link.done):
+  LinkerPort.link(m, interact.linker, interact.a, b1)
+  with m.If(interact.linker.done):
     # Erase >-< B1 linked
-    LinkPort.link(m, interact.link, interact.a, b2)
+    LinkerPort.link(m, interact.linker, interact.a, b2)
     m.next = COPY_2
 
 def copy_2(interact: Interact, m: Module):
   _, b2 = Port.aux(m, interact.b)
-  LinkPort.link(m, interact.link, interact.a, b2)
-  with m.If(interact.link.done):
+  LinkerPort.link(m, interact.linker, interact.a, b2)
+  with m.If(interact.linker.done):
     # Erase >-< B2 linked
     m.d.sync += [
       interact.done.eq(True),
@@ -156,5 +156,5 @@ def commute_alloc(interact: Interact, m: Module):
       m.next = IDLE
     with m.Else():
       m.d.sync += interact.alloc_addrs.eq(interact.alloc.alloc_addrs)
-      LinkPort.link(m, interact.link, )
+      LinkerPort.link(m, interact.linker, )
       m.next = COMMUTE_LINK_1

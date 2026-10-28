@@ -153,11 +153,11 @@ class Processor(wiring.Component):
       a.tag.eq(Tag.COMB), a.payload.eq(base), a.label.eq(0),
       b.tag.eq(Tag.COMB), b.payload.eq(base + 2), b.label.eq(self.selection[1]),
       interact.req_a.eq(a), interact.req_b.eq(b),
-      link.req_a.eq(interact.link.req_a), link.req_b.eq(interact.link.req_b),
+      link.req_a.eq(interact.linker.req_a), link.req_b.eq(interact.linker.req_b),
       # Callers hold requests through acknowledgement; the newly idle callee
       # must not accept them again on that same completion cycle.
-      link.req_link.eq(running & interact.link.req_link & ~link.done),
-      interact.link.done.eq(running & link.done),
+      link.req_link.eq(running & interact.linker.req_link & ~link.done),
+      interact.linker.done.eq(running & link.done),
       alloc.req_free.eq(running & link.alloc.req_free & ~alloc.done),
       alloc.free_addr.eq(link.alloc.free_addr),
       link.alloc.done.eq(running & alloc.done),
@@ -166,7 +166,7 @@ class Processor(wiring.Component):
       link.alloc.stat_allocs.eq(alloc.stat_allocs),
       link.alloc.stat_frees.eq(alloc.stat_frees),
       link.alloc.stat_peak.eq(alloc.stat_peak),
-      interact.link.stat_erase.eq(link.stat_erase),
+      interact.linker.stat_erase.eq(link.stat_erase),
       # Core reset clears all statistics, including modules whose stat_reset
       # input is currently only declared and not yet implemented.
       alloc.stat_reset.eq(False), link.stat_reset.eq(False), interact.stat_reset.eq(False),
