@@ -2,6 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
+from ivga.util.arbiter import Arbiter
 
 from ivga import Addr, Word, flatten
 
@@ -75,5 +76,27 @@ class Heap(wiring.Component):
       write.addr.eq(self.addr),
       write.data.eq(self.write_data),
     ]
+
+    return m
+
+
+class HeapArbiter(wiring.Component):
+  def __init__(self, width: int):
+    self.width = width
+    super().__init__({
+      "clients": In(HeapPort()).array(width),
+      "real": Out(HeapPort()),
+    })
+
+  def elaborate(self, platform):
+    m = Module()
+
+    arbiter = m.submodules.arbiter = Arbiter(self.width)
+
+    for i, client in enumerate(self.clients):
+      wants = client.read | client.write
+      m.d.comb += arbiter.request[i].eq(wants)
+      with m.If(arbiter.grant[i]):
+        wiring.connect(m, wiring.flipped(self.real), wiring.flipped(client))
 
     return m

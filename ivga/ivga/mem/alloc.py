@@ -2,6 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
+from ivga.util.arbiter import Arbiter
 
 from ivga import ADDR_MAX, Addr, Stat, flatten
 
@@ -20,7 +21,7 @@ class AllocPort(wiring.Signature):
     `alloc_addrs` are unspecified.
     Otherwise, raises `oom` and does not allocate any memory.
 
-  - `req_free(n)`: free `n` words at addresses `free_addrs[0:n]`.
+  - `req_free(n)`: free `n` words at addresses `free_addrs[:n]`.
   """
 
   def __init__(self):
@@ -195,3 +196,25 @@ def free_wait(alloc: Alloc, m: Module):
       m.d.sync += alloc.done.eq(True)
       m.next = IDLE
     # else keep looping
+
+
+class AllocArbiter(wiring.Component):
+  def __init__(self, width: int):
+    self.width = width
+    super().__init__({
+      "clients": In(AllocPort()).array(width),
+      "real": Out(AllocPort()),
+    })
+
+  def elaborate(self, platform):
+    m = Module()
+
+    arbiter = m.submodules.arbiter = Arbiter(self.width)
+
+    for i, client in enumerate(self.clients):
+      wants = client.req_alloc | client.req_free
+      m.d.comb += arbiter.request[i].eq(wants)
+      with m.If(arbiter.grant[i]):
+        wiring.connect(m, wiring.flipped(self.real), wiring.flipped(client))
+
+    return m
