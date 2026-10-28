@@ -48,6 +48,8 @@ class LinkerBatch(wiring.Component):
     m = Module()
     m.d.sync += self.done.eq(False)
 
+
+
     linkers = []
     for i in range(self.batch):
       m.submodules[f"linker_{i}"] = linker = Linker()

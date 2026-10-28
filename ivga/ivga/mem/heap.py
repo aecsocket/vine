@@ -3,8 +3,9 @@ from amaranth.lib import wiring
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
 
-from ivga import Addr, Word
+from ivga import Addr, Word, flatten
 
+CAPACITY = 1024
 
 class HeapPort(wiring.Signature):
   """
@@ -48,9 +49,31 @@ class HeapPort(wiring.Signature):
       heap.write_data.eq(data),
     ]
 
-def make_heap():
-  return Memory(
-    shape=Word,
-    depth=1024,
-    init=[]
-  )
+
+class Heap(wiring.Component):
+  control: In(HeapPort())
+
+  def __init__(self):
+    super().__init__()
+    flatten(self, self.control)
+
+  def elaborate(self, platform):
+    m = Module()
+    memory = m.submodules.memory = Memory(
+      shape=Word,
+      depth=CAPACITY,
+      init=[]
+    )
+    read = memory.read_port()
+    write = memory.write_port()
+
+    m.d.comb += [
+      read.en.eq(self.read),
+      read.addr.eq(self.addr),
+      self.read_data.eq(read.data),
+      write.en.eq(self.write),
+      write.addr.eq(self.addr),
+      write.data.eq(self.write_data),
+    ]
+
+    return m
