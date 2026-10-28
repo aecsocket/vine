@@ -1,31 +1,35 @@
 from amaranth import *
 from amaranth.lib import wiring
+from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
 
 from ivga import ADDR_MAX, Addr, Stat, flatten
 
 from .heap import HeapPort
 
+LANES = 4
 
 class AllocPort(wiring.Signature):
   """
   # Operations
 
-  - `req_alloc()`: request to allocate 1 word on the heap.
-    Raises `done` when done; if enough memory was available, `alloc_addr` is the
-    address of the allocated word. Otherwise, raises `oom` and does not allocate
-    any memory.
+  - `req_alloc(n)`: request to allocate `n` words on the heap.
+    Raises `done` when done; if enough memory was available for all `n` words,
+    `alloc_addrs[n:]` holds the addresses of allocated words. The order of
+    addresses you get back is unspecified; all other indices in `alloc_addrs`
+    are unspecified.
+    Otherwise, raises `oom` and does not allocate any memory.
 
-  - `req_free()`: request to free the word at address `free_addr`.
+  - `req_free(n)`: request to free `n` words at addresses `free_addrs[0:n]`.
     Raises `done` when done.
   """
 
   def __init__(self):
     super().__init__({
-      "req_alloc": Out(1),
-      "req_free": Out(1),
-      "free_addr": Out(Addr),
-      "alloc_addr": In(Addr),
+      "req_alloc": Out(range(LANES + 1)),
+      "req_free": Out(range(LANES + 1)),
+      "free_addrs": Out(ArrayLayout(Addr, LANES)),
+      "alloc_addrs": In(ArrayLayout(Addr, LANES)),
       "done": In(1),
       "oom": In(1),
       # stats
@@ -36,14 +40,21 @@ class AllocPort(wiring.Signature):
     })
 
   @staticmethod
-  def alloc(m: Module, alloc):
-    m.d.comb += alloc.req_alloc.eq(True)
+  def alloc(m: Module, alloc, words):
+    m.d.comb += alloc.req_alloc.eq(words)
 
   @staticmethod
-  def free(m: Module, alloc, addr):
+  def free_one(m: Module, alloc, addr):
     m.d.comb += [
-      alloc.req_free.eq(True),
-      alloc.free_addr.eq(addr),
+      alloc.req_free.eq(1),
+      alloc.free_addrs[0].eq(addr),
+    ]
+
+  @staticmethod
+  def free(m: Module, alloc, words, addrs):
+    m.d.comb += [
+      alloc.req_free.eq(words),
+      alloc.free_addrs.eq(addrs),
     ]
 
 
@@ -63,7 +74,10 @@ class Alloc(wiring.Component):
     self.capacity = capacity
     self.empty = Signal(range(capacity + 1))
     self.free_head = Signal(Addr, init=ADDR_EMPTY)
-    self.free_addr_pending = Signal(Addr)
+    self.free_count = Signal(Addr)
+    self.alloc_top = Signal(range(LANES))
+    self.free_addrs_top = Signal(range(LANES))
+    self.free_addrs_arr = Signal(ArrayLayout(Addr, LANES))
     super().__init__()
     flatten(self, self.control)
 
@@ -96,37 +110,52 @@ class Alloc(wiring.Component):
     return m
 
 def idle(alloc: Alloc, m: Module):
-  with m.If(alloc.req_alloc):
-    with m.If(alloc.free_head != ADDR_EMPTY):
-      # reuse the free head
-      # first read the value at the free head
-      # e.g. free_head = 10, heap[free_head] = ?
-      HeapPort.read(m, alloc.heap, alloc.free_head)
-      m.next = ALLOC_WAIT
+  available = alloc.capacity - alloc.empty + alloc.free_count
 
-    with m.Elif(alloc.empty < alloc.capacity):
-      # bump allocate; we still have empty memory
-      m.d.sync += [
-        alloc.alloc_addr.eq(alloc.empty),
-        alloc.empty.eq(alloc.empty + 1),
-        alloc.done.eq(True),
-        alloc.stat_allocs.eq(alloc.stat_allocs + 1),
-      ]
-
-    with m.Else():
-      # tried to bump allocate, but out of memory
+  with m.If(alloc.req_alloc > 0):
+    with m.If(alloc.req_alloc > available):
+      # tried to allocate too much memory
       m.d.sync += [
         alloc.done.eq(True),
         alloc.oom.eq(True),
       ]
+    with m.Elif(alloc.free_head != ADDR_EMPTY):
+      # reuse the free head
+      # first read the value at the free head
+      # e.g. free_head = 10, heap[free_head] = ?
+      m.d.sync += alloc.alloc_top.eq(alloc.req_alloc - 1)
+      HeapPort.read(m, alloc.heap, alloc.free_head)
+      m.next = ALLOC_WAIT
+    with m.Else():
+      bump_alloc(alloc, m, alloc.req_alloc, 0)
 
-  with m.Elif(alloc.req_free):
-    # set `heap[alloc.free_addr]` to the current free head
-    # and set `alloc.free_head` to `alloc.free_addr`
-    HeapPort.write(m, alloc.heap, alloc.free_addr, alloc.free_head)
-    m.d.sync += alloc.free_addr_pending.eq(alloc.free_addr)
+  with m.Elif(alloc.req_free > 0):
+    # set `heap[alloc.free_addrs[top]]` to the current free head
+    # and set `alloc.free_head` to `alloc.free_addrs[top]`
+    # given `top = alloc.req_free - 1`
+    #
+    # for i in alloc.req_free, we do the same for each `heap[alloc.free_addrs[i]]`
+    top = (alloc.req_free - 1).as_unsigned()
+    m.d.sync += [
+      alloc.free_addrs_top.eq(top),
+      alloc.free_addrs_arr.eq(alloc.free_addrs),
+    ]
+    HeapPort.write(m, alloc.heap, alloc.free_addrs[top], alloc.free_head)
     m.next = FREE_WAIT
 
+def bump_alloc(alloc: Alloc, m: Module, n, extra_allocs: int):
+  # wire up only lanes up to `n`,
+  # since this is for both the bump-only and mixed alloc paths
+  for lane in range(LANES):
+    with m.If(lane < n):
+      m.d.sync += alloc.alloc_addrs[lane].eq(alloc.empty + lane)
+
+  m.d.sync += [
+    alloc.done.eq(True),
+    alloc.empty.eq(alloc.empty + n),
+    alloc.stat_allocs.eq(alloc.stat_allocs + n + extra_allocs),
+  ]
+  m.next = IDLE
 
 def alloc_wait(alloc: Alloc, m: Module):
   # wait for heap[free_head] to return
@@ -134,21 +163,36 @@ def alloc_wait(alloc: Alloc, m: Module):
   HeapPort.read(m, alloc.heap, alloc.free_head)
   with m.If(alloc.heap.done):
     m.d.sync += [
-      alloc.alloc_addr.eq(alloc.free_head),
+      alloc.alloc_addrs[alloc.alloc_top].eq(alloc.free_head),
+      alloc.alloc_top.eq(alloc.alloc_top - 1),
       alloc.free_head.eq(alloc.heap.read_data),
-      alloc.done.eq(True),
+      alloc.free_count.eq(alloc.free_count - 1),
+      # note: if we go into the bump_alloc branch, we lose this write.
+      # that's why we specify the `1` in the call below.
       alloc.stat_allocs.eq(alloc.stat_allocs + 1),
     ]
-    m.next = IDLE
+
+    with m.If(alloc.alloc_top == 0):
+      m.d.sync += alloc.done.eq(True),
+      m.next = IDLE
+    with m.Elif(alloc.heap.read_data == ADDR_EMPTY):
+      # free list is empty but we need more; bump allocate
+      # bump alloc'ing is safe since we checked this in idle
+      bump_alloc(alloc, m, alloc.alloc_top, 1)
 
 def free_wait(alloc: Alloc, m: Module):
   # wait for memory write to complete
   # keep heap wires stable while waiting
-  HeapPort.write(m, alloc.heap, alloc.free_addr_pending, alloc.free_head)
+  HeapPort.write(m, alloc.heap, alloc.free_addrs_arr[alloc.free_addrs_top], alloc.free_head)
   with m.If(alloc.heap.done):
     m.d.sync += [
-      alloc.free_head.eq(alloc.free_addr_pending),
-      alloc.done.eq(True),
+      alloc.free_head.eq(alloc.free_addrs_arr[alloc.free_addrs_top]),
+      alloc.free_count.eq(alloc.free_count + 1),
+      alloc.free_addrs_top.eq(alloc.free_addrs_top - 1),
       alloc.stat_frees.eq(alloc.stat_frees + 1),
     ]
-    m.next = IDLE
+
+    with m.If(alloc.free_addrs_top == 0):
+      m.d.sync += alloc.done.eq(True)
+      m.next = IDLE
+    # else keep looping

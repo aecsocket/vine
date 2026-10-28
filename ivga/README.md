@@ -81,3 +81,16 @@ WAIT i actually might be completely wrong. linking only erases, interactions may
 Working on the rest of the interactions in the interactor. do we *really* have to wait 2 times for the linker? what if we had 2 linker units for erase/copy? or 4 for commutation? I know we still have competition on the heap/alloc arbiter, but..? Something to experiment with. Might speed up the interact engine to do things in less cycles.
 
 what about vectorized/wide allocations?
+
+ok one thing that REALLY annoys me about this design is the fact that we can only do one memory read/write at a time, and only one-word alloc/frees at a time. this seems lowkey ridiculous and this has gotta be something I can speed up.
+the bump allocator + freelist architecture _really_ has gotta be improved bro. Our fundamental limitation is 1 read + 1 write per clock cycle; but maybe allocating in pages of 2 words? or pages of 4 words? but that is probably TERRIBLE for fragmentation.
+also how are we eventually gonna handle frozen immutable shared memory like that vine proposal I talked about on 21st? cause I'm sure as hell not doing 2 billion pointer chases to allocate 2gb of memory from our free list. and its unreasonable to use 2 separate heaps, one for the net and one for immutable shared data. (or is it? my gut tells me this is a really bad idea cause RAM is already scarce enough.)
+
+Anyway that's thinking for another time, but rn I need to make the allocator vector-aware anyway, because implementing commutation without vectorized alloc is dumb. You're telling me I need FOUR FSM states to represent the allocations a commutation does? That's dumb the allocator should just be vector aware instead, even if behind the scenes its still N allocs = N cycles.
+
+Going back to an earlier design decision rn. The interactor is wired to a link unit externally, because I assumed that smth else needs to use the linker. But now looking at it more, the interactor really needs more than 1 link unit, otherwise it has to go through 8 (!) FSM states to do a commutation. That's also not great... what if I just gave the interactor 8 link units? We can't speed up memory access obviously but we CAN do all links as one big batch which we await much easier. If we do that, then where else is linking used? Looking at the IVM:
+- in the interactor (duh)
+- in grafting (could reuse the interactor's?)
+- in the IVM runtime setup - linking the IO port up
+
+This is a very small inventory of callsites... we can give the interactor its own 8 linker submodules, then we instantiate 1 extra linker for runtime setup that remains mostly unused. Then the interactor has to arbitrate memory access tho. That's.. less than ideal but we would need to arbitrate memory access anyway. And of course we can play around with this later - if we need to reduce silicon space/LUT usage, we can give an interact unit 4 linker units + split commutation into 2 FSM states. Or 2 LUs + 4 states.

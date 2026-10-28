@@ -1,7 +1,9 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
-from ivga.mem import AllocPort, HeapPort, StackPort
+from ivga.mem.alloc import AllocPort
+from ivga.mem.heap import HeapPort
+from ivga.mem.stack import StackPort
 
 from ivga import Port, Port2, Stat, Tag, flatten
 
@@ -179,7 +181,7 @@ def follow(link: Link, m: Module):
       # - free B.payload, wait for it to be freed, then
       # - continue `link(a, heap[B.payload])`
       #   where `previous = heap[B.payload]`
-      AllocPort.free(m, link.alloc, link.b.payload)
+      AllocPort.free_one(m, link.alloc, link.b.payload)
       m.d.sync += link.previous.eq(target)
       m.next = FOLLOW_FREE
 
@@ -187,7 +189,7 @@ def connect_same_wire(link: Link, m: Module, a, b):
   # A's bits compose a wire, and B has the same bits,
   # so B is the same wire as A.
   # so we just free `A.payload`, and don't do any real connecting.
-  AllocPort.free(m, link.alloc, a.payload)
+  AllocPort.free_one(m, link.alloc, a.payload)
   m.next = CONNECT_FREE
 
 
@@ -203,7 +205,7 @@ def connect_(link: Link, m: Module, a, b):
     m.next = CONNECT_SWAP
 
 def connect_free(link: Link, m: Module):
-  AllocPort.free(m, link.alloc, link.a.payload)
+  AllocPort.free_one(m, link.alloc, link.a.payload)
   with m.If(link.alloc.done):
     m.d.sync += link.done.eq(True)
     m.next = IDLE
@@ -224,18 +226,18 @@ def connect_swap(link: Link, m: Module):
       # save `previous` into a register
       # cause we need to set `a = previous`
       m.d.sync += link.previous.eq(previous)
-      AllocPort.free(m, link.alloc, link.a.payload)
+      AllocPort.free_one(m, link.alloc, link.a.payload)
       m.next = CONNECT_SWAP_FREE
 
 def connect_swap_free(link: Link, m: Module):
-  AllocPort.free(m, link.alloc, link.a.payload)
+  AllocPort.free_one(m, link.alloc, link.a.payload)
   with m.If(link.alloc.done):
     # A.payload is freed, do `link(previous, b)`
     m.d.sync += link.a.eq(link.previous)
     do_link_(link, m, link.previous, link.b)
 
 def follow_free(link: Link, m: Module):
-  AllocPort.free(m, link.alloc, link.b.payload)
+  AllocPort.free_one(m, link.alloc, link.b.payload)
   with m.If(link.alloc.done):
     # old intermediate wire has been freed,
     # continue `link(a, previous)`

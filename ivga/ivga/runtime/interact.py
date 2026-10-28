@@ -1,9 +1,10 @@
 from amaranth import *
 from amaranth.lib import wiring
+from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
+from ivga.mem.alloc import AllocPort
 
 from ivga import Addr, Port, Stat, Tag, flatten
-from ivga.mem.alloc import AllocPort
 
 from .link import LinkPort
 
@@ -27,6 +28,7 @@ ANNIHILATE_1 = "annihilate_1"
 ANNIHILATE_2 = "annihilate_2"
 COPY_1 = "copy_1"
 COPY_2 = "copy_2"
+COMMUTE_ALLOC = "commute_alloc"
 
 class Interact(wiring.Component):
   control: In(InteractPort())
@@ -36,7 +38,7 @@ class Interact(wiring.Component):
   def __init__(self):
     self.a = Signal(Port)
     self.b = Signal(Port)
-    self.alloc_addrs = Signal(Addr).array(4)
+    self.alloc_addrs = Signal(ArrayLayout(Addr, 4))
     super().__init__()
     flatten(self, self.control)
 
@@ -93,8 +95,8 @@ def do_interact_(interact: Interact, m: Module, a, b):
   ):
     # (Comb|ExtFn) >-< (Comb|ExtFn); if two Combs,
     # they must not have the same label; so we commute
-    AllocPort.alloc(m, interact.alloc)
-    m.next = COMMUTE_ALLOC_1
+    AllocPort.alloc(m, interact.alloc, 4)
+    m.next = COMMUTE_ALLOC
 
   with m.Elif(a.tag == Tag.ERASE):
     # Erase >-< B (B1, B2)
@@ -145,30 +147,14 @@ def copy_2(interact: Interact, m: Module):
     ]
     m.next = IDLE
 
-def commute_alloc_1(interact: Interact, m: Module):
-  AllocPort.alloc(m, interact.alloc)
+def commute_alloc(interact: Interact, m: Module):
+  AllocPort.alloc(m, interact.alloc, 4)
   with m.If(interact.alloc.done):
-    m.d.sync += interact.alloc_addrs[0].eq(interact.alloc.alloc_addr)
-    AllocPort.alloc(m, interact.alloc)
-    m.next = COMMUTE_ALLOC_2
-
-def commute_alloc_2(interact: Interact, m: Module):
-  AllocPort.alloc(m, interact.alloc)
-  with m.If(interact.alloc.done):
-    m.d.sync += interact.alloc_addrs[1].eq(interact.alloc.alloc_addr)
-    AllocPort.alloc(m, interact.alloc)
-    m.next = COMMUTE_ALLOC_3
-
-def commute_alloc_3(interact: Interact, m: Module):
-  AllocPort.alloc(m, interact.alloc)
-  with m.If(interact.alloc.done):
-    m.d.sync += interact.alloc_addrs[2].eq(interact.alloc.alloc_addr)
-    AllocPort.alloc(m, interact.alloc)
-    m.next = COMMUTE_ALLOC_4
-
-def commute_alloc_4(interact: Interact, m: Module):
-  AllocPort.alloc(m, interact.alloc)
-  with m.If(interact.alloc.done):
-    m.d.sync += interact.alloc_addrs[3].eq(interact.alloc.alloc_addr)
-    AllocPort.alloc(m, interact.alloc)
-    m.next = COMMUTE_LINK_1
+    with m.If(interact.alloc.oom):
+      # TODO some kind of OOM fault handling?
+      m.d.sync += interact.done.eq(True)
+      m.next = IDLE
+    with m.Else():
+      m.d.sync += interact.alloc_addrs.eq(interact.alloc.alloc_addrs)
+      LinkPort.link(m, interact.link, )
+      m.next = COMMUTE_LINK_1

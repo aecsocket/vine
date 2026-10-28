@@ -1,17 +1,22 @@
-"""Allocator proofs: run `python -m ivga.slop.test_alloc`.
+"""Batched allocator proofs: run `python -m ivga.slop.test_alloc`.
 
-Scripted tests check timing and free-list behavior against a Python oracle.
-The symbolic bump test checks every allocation-request sequence with no frees.
-The heap model acknowledges each transaction once and poisons inactive reads.
-Invalid frees/double frees are caller errors, not supported allocator behavior.
+Requests are counts in 0..LANES; zero means idle. Only alloc_addrs[:n] is
+valid, and its ordering is unspecified. Scripts use a Python oracle for the
+current free-first policy, reverse-order batch frees, and delayed heap service.
+OOM must be atomic. Busy-cycle input changes must not change captured requests.
+Invalid counts, invalid frees, and duplicate frees are caller errors.
 """
 
-from amaranth import Array, Assert, Cover, Mux, Signal
+import subprocess
+from dataclasses import dataclass, field
+from typing import TypedDict
+
+from amaranth import Array, Assert, Assume, Cat, Const, Cover, Mux, Signal
 from amaranth.asserts import AnySeq
 from amaranth.hdl import Fragment
 
-from ivga import Word
-from ivga.mem.alloc import ADDR_EMPTY, IDLE, Alloc
+from ivga import Addr, Word
+from ivga.mem.alloc import ADDR_EMPTY, IDLE, LANES, Alloc
 from ivga.verify import Verify
 
 EMPTY = ADDR_EMPTY.value
@@ -20,49 +25,36 @@ POISON = 0xDEAD_BEEF
 
 def setup(capacity=4, cycles=5):
   dut = Alloc(capacity=capacity)
-  # make sure stat signals are kept in the final vcd
   for signal in (dut.stat_allocs, dut.stat_frees, dut.stat_peak):
     signal.attrs["keep"] = 1
-
   verify = Verify(dut, cycles=cycles)
   verify.m.d.comb += [
-    dut.req_alloc.eq(False),
-    dut.req_free.eq(False),
-    dut.free_addr.eq(0),
-    dut.heap.done.eq(0),
-    dut.heap.read_data.eq(0),
+    dut.req_alloc.eq(0), dut.req_free.eq(0), dut.free_addrs.eq(0),
+    dut.stat_reset.eq(False), dut.heap.done.eq(False), dut.heap.read_data.eq(0),
+    Assert(dut.empty <= capacity),
+    Assert(dut.free_count <= dut.empty),
+    Assert((dut.free_head == ADDR_EMPTY) == (dut.free_count == 0)),
   ]
   return dut, verify
 
 
-def assert_bump_allocd(m, dut: Alloc, at: int):
-  m.d.comb += [
-    Assert(dut.done),
-    Assert(~dut.oom),
-    Assert(dut.empty == at + 1),
-    Assert(dut.alloc_addr == at),
-  ]
-
-
 def add_heap_model(m, dut: Alloc, delay: int):
-  """One transaction completes `delay` edges after its initial capture.
+  """Capture once, acknowledge after delay edges, and assert request stability.
 
-  Requests must stay stable through acknowledgement. The allocator's initial
-  request state plus wait state give a total latency of delay + 1 edges.
+  Each transaction takes delay + 1 edges from its initial request through the
+  allocator consuming its acknowledgment. Consecutive batch entries may change
+  address/data after that consumption edge without a request-low bubble.
   """
   assert delay >= 1
   words = Array(Signal(Word, name=f"heap_{i}") for i in range(dut.capacity))
   pending = Signal()
   remaining = Signal(range(delay))
-  read = Signal()
-  write = Signal()
+  read, write = Signal(), Signal()
   addr = Signal.like(dut.heap.addr)
   data = Signal(Word)
-  reads = Signal(16)
-  writes = Signal(16)
+  reads, writes = Signal(16), Signal(16)
   request = dut.heap.read | dut.heap.write
   complete = pending & (remaining == 0)
-
   m.d.comb += [
     dut.heap.done.eq(complete),
     dut.heap.read_data.eq(Mux(complete & read, words[addr], POISON)),
@@ -70,21 +62,15 @@ def add_heap_model(m, dut: Alloc, delay: int):
   ]
   with m.If(request):
     m.d.comb += Assert(dut.heap.addr < dut.capacity)
-
   with m.If(~pending & request):
     m.d.sync += [
-      pending.eq(True),
-      remaining.eq(delay - 1),
-      read.eq(dut.heap.read),
-      write.eq(dut.heap.write),
-      addr.eq(dut.heap.addr),
-      data.eq(dut.heap.write_data),
+      pending.eq(True), remaining.eq(delay - 1),
+      read.eq(dut.heap.read), write.eq(dut.heap.write),
+      addr.eq(dut.heap.addr), data.eq(dut.heap.write_data),
     ]
   with m.Elif(pending):
-    # These assert client behavior, rather than assuming the DUT is correct.
     m.d.comb += [
-      Assert(dut.heap.read == read),
-      Assert(dut.heap.write == write),
+      Assert(dut.heap.read == read), Assert(dut.heap.write == write),
       Assert(dut.heap.addr == addr),
     ]
     with m.If(write):
@@ -97,292 +83,375 @@ def add_heap_model(m, dut: Alloc, delay: int):
         m.d.sync += reads.eq(reads + 1)
     with m.Else():
       m.d.sync += remaining.eq(remaining - 1)
-
   return words, reads, writes
 
 
-def verify_sequence(name, operations, capacity=4, heap_delay=1):
-  """Build a legal operation script and independently predict its results."""
-  bump = 0
-  free = []
-  live = set()
-  schedule = []
-  cycle = 0
-  read_count = 0
-  write_count = 0
+class ExpectedState(TypedDict):
+  bump: int
+  head: int
+  free_count: int
+  words: tuple[int, ...]
+  allocs: int
+  frees: int
+  peak: int
+  reads: int
+  writes: int
+  done: bool
+  oom: bool
 
+
+@dataclass
+class Oracle:
+  capacity: int
+  bump: int = 0
+  free: list[int] = field(default_factory=list)
+  live: set[int] = field(default_factory=set)
+  words: list[int] = field(init=False)
+  allocs: int = 0
+  frees: int = 0
+  peak: int = 0
+  reads: int = 0
+  writes: int = 0
+
+  def __post_init__(self):
+    self.words = [0] * self.capacity
+
+  def snapshot(self, *, done=False, oom=False) -> ExpectedState:
+    return {
+      "bump": self.bump, "head": self.free[-1] if self.free else EMPTY,
+      "free_count": len(self.free), "words": tuple(self.words),
+      "allocs": self.allocs, "frees": self.frees, "peak": self.peak,
+      "reads": self.reads, "writes": self.writes, "done": done, "oom": oom,
+    }
+
+  def advance(self, *, bump=0, recycle=False, free_addr=None, done=False, oom=False) -> ExpectedState:
+    # stat_peak observes the old bump pointer at each edge.
+    self.peak = max(self.peak, self.bump)
+    if recycle:
+      addr = self.free.pop()
+      assert addr not in self.live
+      self.live.add(addr)
+      self.allocs += 1
+      self.reads += 1
+    if bump:
+      addresses = set(range(self.bump, self.bump + bump))
+      assert not addresses & self.live
+      assert self.bump + bump <= self.capacity
+      self.live.update(addresses)
+      self.bump += bump
+      self.allocs += bump
+    if free_addr is not None:
+      assert free_addr in self.live, "scripts must only free live addresses"
+      self.words[free_addr] = self.free[-1] if self.free else EMPTY
+      self.live.remove(free_addr)
+      self.free.append(free_addr)
+      self.frees += 1
+      self.writes += 1
+    return self.snapshot(done=done, oom=oom)
+
+
+def schedule_sequence(operations, capacity, heap_delay):
+  """Return per-cycle expected state and the independently predicted results.
+
+  Operations: ('alloc', n), ('free', addresses), ('idle', cycles), or
+  ('both', n, free_addresses). Legacy single-word tuples are also accepted.
+  """
+  assert heap_delay >= 1
+  oracle = Oracle(capacity)
+  states = [oracle.snapshot()]
+  schedule = []
   for operation in operations:
     kind = operation[0]
-    before_bump = bump
-    before_head = free[-1] if free else EMPTY
-    oom = False
-    addr = None
-    if kind == "alloc":
-      if free:
-        addr = free.pop()
-        latency = heap_delay + 1
-        read_count += 1
-      elif bump < capacity:
-        addr = bump
-        bump += 1
-        latency = 1
+    if kind == "idle":
+      for _ in range(operation[1]):
+        states.append(oracle.advance())
+      continue
+    assert kind in ("alloc", "free", "both")
+    start = len(states) - 1
+    addresses = ()
+    results = ()
+    n = operation[1] if len(operation) > 1 else 1
+    if kind in ("alloc", "both"):
+      assert 1 <= n <= LANES
+      if kind == "both":
+        addresses = tuple(operation[2])
+        assert 1 <= len(addresses) <= LANES
+        assert len(set(addresses)) == len(addresses)
+        assert set(addresses) <= oracle.live
+      available = capacity - oracle.bump + len(oracle.free)
+      if n > available:
+        states.append(oracle.advance(done=True, oom=True))
       else:
-        oom = True
-        latency = 1
-      if addr is not None:
-        assert addr not in live
-        live.add(addr)
+        reused = min(n, len(oracle.free))
+        bumped = n - reused
+        results = tuple(reversed(oracle.free[-reused:])) if reused else ()
+        results += tuple(range(oracle.bump, oracle.bump + bumped))
+        if not reused:
+          states.append(oracle.advance(bump=bumped, done=True))
+        for index in range(reused):
+          for _ in range(heap_delay):
+            states.append(oracle.advance())
+          last = index == reused - 1
+          states.append(oracle.advance(
+            recycle=True, bump=bumped if last else 0, done=last,
+          ))
     else:
-      assert kind == "free"
-      addr = operation[1]
-      assert addr in live, "scripts must only free live addresses"
-      live.remove(addr)
-      free.append(addr)
-      latency = heap_delay + 1
-      write_count += 1
-
-    finish = cycle + latency
+      addresses = (n,) if isinstance(n, int) else tuple(n)
+      assert 1 <= len(addresses) <= LANES
+      assert len(set(addresses)) == len(addresses), "duplicate free in script"
+      assert set(addresses) <= oracle.live, "scripts must only free live addresses"
+      for index, addr in enumerate(reversed(addresses)):
+        for _ in range(heap_delay):
+          states.append(oracle.advance())
+        states.append(oracle.advance(free_addr=addr, done=index == len(addresses) - 1))
     schedule.append({
-      "kind": kind, "start": cycle, "finish": finish, "addr": addr, "oom": oom,
-      "before_bump": before_bump, "before_head": before_head, "bump": bump,
-      "head": free[-1] if free else EMPTY,
+      "kind": kind, "start": start, "finish": len(states) - 1,
+      "count": n if kind != "free" else 0,
+      "addresses": addresses, "results": results,
     })
-    cycle = finish
+  # Include the clearing of done/oom and the lagged peak update.
+  states.extend((oracle.advance(), oracle.advance()))
+  return schedule, states
 
-  # Leave a distinct final idle cycle before the harness counter saturates.
-  dut, verify = setup(capacity=capacity, cycles=cycle + 2)
-  m, tick = verify.m, verify.cycle
+
+def assert_addresses(m, dut, expected):
+  """The first n lanes must be a permutation, not a prescribed ordering."""
+  for index in range(len(expected)):
+    addr = dut.alloc_addrs[index]
+    m.d.comb += Assert(Cat(*(addr == value for value in expected)).any())
+    for previous in range(index):
+      m.d.comb += Assert(addr != dut.alloc_addrs[previous])
+
+
+def verify_sequence(name, operations, capacity=4, heap_delay=1):
+  schedule, states = schedule_sequence(operations, capacity, heap_delay)
+  dut, verify = setup(capacity=capacity, cycles=len(states) - 1)
+  m, cycle = verify.m, verify.cycle
   words, reads, writes = add_heap_model(m, dut, heap_delay)
-
+  # Exclude unreachable spare encodings through an asserted harness invariant,
+  # so induction cannot park outside every scripted cycle's assertions.
+  m.d.comb += Assert(cycle < len(states))
   for step in schedule:
-    with m.If(tick == step["start"]):
-      if step["kind"] == "alloc":
-        m.d.comb += dut.req_alloc.eq(True)
-      else:
-        m.d.comb += [dut.req_free.eq(True), dut.free_addr.eq(step["addr"])]
-
-    with m.If((tick > step["start"]) & (tick < step["finish"])):
+    with m.If(cycle == step["start"]):
+      if step["kind"] in ("alloc", "both"):
+        m.d.comb += dut.req_alloc.eq(step["count"])
+      if step["kind"] in ("free", "both"):
+        padded = step["addresses"] + (0,) * (LANES - len(step["addresses"]))
+        m.d.comb += [
+          dut.req_free.eq(len(step["addresses"])),
+          dut.free_addrs.eq(Const(padded, dut.free_addrs.shape())),
+        ]
+    with m.If((cycle > step["start"]) & (cycle < step["finish"])):
+      # Counts/data must have been captured, not consumed live while busy.
       m.d.comb += [
-        Assert(~dut.done),
-        Assert(~dut.oom),
-        Assert(dut.empty == step["before_bump"]),
-        Assert(dut.free_head == step["before_head"]),
+        dut.req_alloc.eq(LANES), dut.req_free.eq(LANES),
+        dut.free_addrs.eq(Const([EMPTY] * LANES, dut.free_addrs.shape())),
       ]
-      if step["kind"] == "free":
-        # Change the caller's address while busy: the captured address must win.
-        m.d.comb += dut.free_addr.eq((step["addr"] + 1) % capacity)
+    if step["results"]:
+      with m.If(cycle == step["finish"]):
+        assert_addresses(m, dut, step["results"])
+    m.d.comb += Cover((cycle == step["finish"]) & dut.done)
 
-    with m.If(tick == step["finish"]):
+  for tick, expected in enumerate(states):
+    with m.If(cycle == tick):
       m.d.comb += [
-        Assert(dut.done),
-        Assert(dut.oom == step["oom"]),
-        Assert(dut.empty == step["bump"]),
-        Assert(dut.free_head == step["head"]),
+        Assert(dut.done == expected["done"]), Assert(dut.oom == expected["oom"]),
+        Assert(dut.empty == expected["bump"]), Assert(dut.free_head == expected["head"]),
+        Assert(dut.free_count == expected["free_count"]),
+        Assert(dut.stat_allocs == expected["allocs"]),
+        Assert(dut.stat_frees == expected["frees"]), Assert(dut.stat_peak == expected["peak"]),
+        Assert(reads == expected["reads"]), Assert(writes == expected["writes"]),
       ]
-      if step["kind"] == "alloc" and not step["oom"]:
-        m.d.comb += Assert(dut.alloc_addr == step["addr"])
-      elif step["kind"] == "free":
-        m.d.comb += Assert(words[step["addr"]] == step["before_head"])
-    m.d.comb += Cover((tick == step["finish"]) & dut.done)
-
-  with m.If(tick > cycle):
-    m.d.comb += [
-      Assert(~dut.done),
-      Assert(~dut.oom),
-      Assert(~dut.heap.read),
-      Assert(~dut.heap.write),
-      Assert(dut.empty == bump),
-      Assert(dut.free_head == (free[-1] if free else EMPTY)),
-      Assert(reads == read_count),
-      Assert(writes == write_count),
-    ]
-  m.d.comb += Cover(tick == cycle + 1)
-  verify.prove(name, depth=max(6, cycle + 3))
+      for addr, value in enumerate(expected["words"]):
+        m.d.comb += Assert(words[addr] == value)
+      if tick == len(states) - 1:
+        m.d.comb += [Assert(~dut.heap.read), Assert(~dut.heap.write)]
+  m.d.comb += Cover(cycle == len(states) - 1)
+  verify.prove(name, depth=max(6, len(states) + 1))
 
 
 def verify_idle():
-  dut, verify = setup()
-  m, cycle = verify.m, verify.cycle
-  m.d.comb += [
-    Assert(dut.empty == 0),
-    Assert(dut.free_head == ADDR_EMPTY),
-    Assert(~dut.done),
-    Assert(~dut.oom),
-    Assert(~dut.heap.read),
-    Assert(~dut.heap.write),
-    Cover(cycle == 4),
-  ]
-  verify.prove()
+  verify_sequence("verify_idle", [("idle", 4)])
 
 
 def verify_one_bump_alloc():
-  dut, verify = setup()
-  m, cycle = verify.m, verify.cycle
-  with m.If(cycle == 0):
-    m.d.comb += [
-      Assert(dut.empty == 0),
-      Assert(~dut.done),
-      dut.req_alloc.eq(True),
-    ]
-  with m.If(cycle == 1):
-    assert_bump_allocd(m, dut, at=0)
-  with m.If(cycle >= 2):
-    m.d.comb += [Assert(~dut.done), Assert(dut.empty == 1)]
-  m.d.comb += Cover((cycle == 1) & dut.done)
-  verify.prove()
+  verify_sequence("verify_one_bump_alloc", [("alloc", 1)])
 
 
 def verify_two_bump_allocs():
-  dut, verify = setup()
-  m, cycle = verify.m, verify.cycle
-  with m.If((cycle == 0) | (cycle == 3)):
-    m.d.comb += dut.req_alloc.eq(True)
-  with m.If(cycle == 1):
-    assert_bump_allocd(m, dut, at=0)
-  with m.If((cycle == 2) | (cycle == 3)):
-    m.d.comb += [Assert(~dut.done), Assert(dut.empty == 1)]
-  with m.If(cycle == 4):
-    assert_bump_allocd(m, dut, at=1)
-  m.d.comb += [
-    Cover((cycle == 1) & dut.done),
-    Cover((cycle == 4) & dut.done),
-  ]
-  verify.prove()
+  verify_sequence("verify_two_bump_allocs", [("alloc", 1), ("idle", 2), ("alloc", 1)])
 
 
 def verify_consecutive_bump_allocs():
-  verify_sequence("verify_consecutive_bump_allocs", [("alloc",)] * 4)
+  verify_sequence("verify_consecutive_bump_allocs", [("alloc", 1)] * 4)
 
 
 def verify_capacity_boundaries():
   for capacity in (1, 3, 4):
-    verify_sequence(f"verify_capacity_{capacity}", [("alloc",)] * (capacity + 2),
+    verify_sequence(f"verify_capacity_{capacity}", [("alloc", 1)] * (capacity + 2),
                     capacity=capacity)
 
 
 def verify_repeated_oom():
-  verify_sequence("verify_repeated_oom", [("alloc",)] * 7)
+  verify_sequence("verify_repeated_oom", [("alloc", 4)] + [("alloc", 1)] * 3)
 
 
 def verify_free_waits_and_captures_address():
   verify_sequence("verify_free_waits_and_captures_address",
-                  [("alloc",)] * 3 + [("free", 2)], heap_delay=3)
+                  [("alloc", 3), ("free", 2)], heap_delay=3)
 
 
 def verify_realloc_then_bump():
   verify_sequence("verify_realloc_then_bump",
-                  [("alloc",), ("free", 0), ("alloc",), ("alloc",)])
+                  [("alloc", 3), ("free", 0), ("alloc", 1), ("alloc", 1)])
 
 
 def verify_free_list_lifo():
-  # Returned addresses after the frees must be 2, 0, then bump address 3.
   verify_sequence("verify_free_list_lifo",
-                  [("alloc",)] * 3 + [("free", 0), ("free", 2)] + [("alloc",)] * 3)
+                  [("alloc", 3), ("free", 0), ("free", 2)] + [("alloc", 1)] * 3)
 
 
 def verify_delayed_reuse():
   verify_sequence("verify_delayed_reuse",
-                  [("alloc",)] * 2 + [("free", 1), ("free", 0)] + [("alloc",)] * 3,
+                  [("alloc", 2), ("free", 1), ("free", 0)] + [("alloc", 1)] * 3,
                   heap_delay=3)
 
 
 def verify_oom_recovery():
   verify_sequence("verify_oom_recovery",
-                  [("alloc",)] * 5 + [("free", 1), ("alloc",), ("alloc",)])
+                  [("alloc", 4), ("alloc", 1), ("free", 1), ("alloc", 1), ("alloc", 1)])
 
 
 def verify_free_all_and_reallocate():
   verify_sequence("verify_free_all_and_reallocate",
-                  [("alloc",)] * 4 + [("free", i) for i in range(4)] + [("alloc",)] * 5)
+                  [("alloc", 4), ("free", (0, 1, 2, 3)), ("alloc", 4)])
 
 
 def verify_repeated_reuse():
   verify_sequence("verify_repeated_reuse",
-                  [("alloc",)] + [("free", 0), ("alloc",)] * 3 + [("alloc",)])
+                  [("alloc", 1)] + [("free", 0), ("alloc", 1)] * 3 + [("alloc", 1)])
 
 
 def verify_allocation_priority():
-  # The current interface explicitly gives alloc priority over simultaneous free.
-  dut, verify = setup()
-  m, cycle = verify.m, verify.cycle
-  with m.If(cycle < 2):
-    m.d.comb += [dut.req_alloc.eq(True), dut.req_free.eq(True)]
-  with m.If(cycle == 1):
-    assert_bump_allocd(m, dut, at=0)
-  with m.If(cycle == 2):
-    assert_bump_allocd(m, dut, at=1)
-  m.d.comb += [
-    Assert(dut.free_head == ADDR_EMPTY),
-    Assert(~dut.heap.write),
-    Cover((cycle == 2) & dut.done),
-  ]
-  verify.prove()
+  verify_sequence("verify_allocation_priority", [
+    ("alloc", 1), ("both", 2, (0,)), ("both", 1, (0,)), ("both", 1, (0,)),
+  ])
+
+
+def verify_vector_bump():
+  for count in range(1, LANES + 1):
+    verify_sequence(f"verify_vector_bump_{count}", [("alloc", count)], capacity=count)
+
+
+def verify_vector_free_captures_inputs():
+  verify_sequence("verify_vector_free_captures_inputs",
+                  [("alloc", 4), ("free", (1, 3, 0))], heap_delay=3)
+
+
+def verify_vector_reuse():
+  verify_sequence("verify_vector_reuse",
+                  [("alloc", 4), ("free", (0, 1, 2, 3)), ("alloc", 2)], capacity=4)
+
+
+def verify_vector_mixed_allocation():
+  verify_sequence("verify_vector_mixed_allocation",
+                  [("alloc", 3), ("free", 0), ("alloc", 2)], capacity=4)
+
+
+def verify_vector_mixed_multiple_frees():
+  verify_sequence("verify_vector_mixed_multiple_frees",
+                  [("alloc", 4), ("free", (0, 2)), ("alloc", 4)], capacity=6, heap_delay=3)
+
+
+def verify_vector_oom_is_atomic():
+  verify_sequence("verify_vector_oom_is_atomic", [
+    ("alloc", 4), ("free", (0, 2)), ("alloc", 3), ("alloc", 1),
+  ])
+
+
+def verify_vector_partial_capacity():
+  verify_sequence("verify_vector_partial_capacity",
+                  [("alloc", 4), ("alloc", 4), ("alloc", 3), ("alloc", 1)], capacity=7)
+
+
+def verify_vector_repeated_batches():
+  verify_sequence("verify_vector_repeated_batches", [
+    ("alloc", 4), ("free", (3, 1, 0, 2)), ("alloc", 4),
+    ("free", (0, 1, 2, 3)), ("alloc", 4),
+  ])
 
 
 def verify_arbitrary_bump_requests():
-  # Reuse this exact fragment so the invariant refers to the DUT's real FSM.
   dut = Alloc(capacity=4)
   fragment = Fragment.get(dut, platform=None)
   fsm = fragment.generated["fsm"]
   verify = Verify(fragment, cycles=7)
   m = verify.m
+  request = AnySeq(len(dut.req_alloc))
+  expected_empty = Signal(range(dut.capacity + 1))
+  expected_done, expected_oom = Signal(), Signal()
+  expected_base = Signal(Addr)
+  expected_count = Signal(range(LANES + 1))
+  expected_peak = Signal(Addr)
   m.d.comb += [
-    dut.req_free.eq(False),
-    dut.free_addr.eq(0),
-    dut.heap.done.eq(0),
-    dut.heap.read_data.eq(0),
-    # An asserted inductive invariant, not an assumption about reachable states.
+    Assume(request <= LANES),  # Restrict the caller to representable valid counts.
+    dut.req_alloc.eq(request), dut.req_free.eq(0), dut.free_addrs.eq(0),
+    dut.stat_reset.eq(False), dut.heap.done.eq(False), dut.heap.read_data.eq(0),
     Assert(fsm.ongoing(IDLE)),
   ]
-  request = AnySeq(1)
-  expected_empty = Signal(range(dut.capacity + 1))
-  expected_done = Signal()
-  expected_oom = Signal()
-  expected_addr = Signal.like(dut.alloc_addr)
-  m.d.comb += dut.req_alloc.eq(request)
-  m.d.sync += [expected_done.eq(request), expected_oom.eq(False)]
-  with m.If(request):
-    with m.If(expected_empty < dut.capacity):
+  m.d.sync += [
+    expected_done.eq(request != 0), expected_oom.eq(False),
+    expected_peak.eq(Mux(expected_empty > expected_peak, expected_empty, expected_peak)),
+  ]
+  with m.If(request != 0):
+    with m.If(request <= dut.capacity - expected_empty):
       m.d.sync += [
-        expected_addr.eq(expected_empty),
-        expected_empty.eq(expected_empty + 1),
+        expected_base.eq(expected_empty), expected_count.eq(request),
+        expected_empty.eq(expected_empty + request),
       ]
     with m.Else():
       m.d.sync += expected_oom.eq(True)
-
   m.d.comb += [
-    Assert(dut.empty == expected_empty),
-    Assert(dut.empty <= dut.capacity),
-    Assert(dut.done == expected_done),
-    Assert(dut.oom == expected_oom),
-    Assert(dut.free_head == ADDR_EMPTY),
-    Assert(~dut.heap.read),
-    Assert(~dut.heap.write),
-    Cover(dut.done & ~dut.oom),
-    Cover(dut.done & dut.oom),
+    Assert(dut.empty == expected_empty), Assert(dut.empty <= dut.capacity),
+    Assert(dut.done == expected_done), Assert(dut.oom == expected_oom),
+    Assert(dut.free_head == ADDR_EMPTY), Assert(dut.free_count == 0),
+    Assert(dut.stat_allocs == expected_empty), Assert(dut.stat_frees == 0),
+    Assert(dut.stat_peak == expected_peak),
+    Assert(~dut.heap.read), Assert(~dut.heap.write),
+    Cover(dut.done & dut.oom), Cover(~dut.done),
   ]
-  with m.If(expected_done & ~expected_oom):
-    m.d.comb += Assert(dut.alloc_addr == expected_addr)
+  for lane in range(LANES):
+    with m.If(expected_done & ~expected_oom & (lane < expected_count)):
+      m.d.comb += [
+        Assert(dut.alloc_addrs[lane] >= expected_base),
+        Assert(dut.alloc_addrs[lane] < expected_base + expected_count),
+      ]
+      for previous in range(lane):
+        m.d.comb += Assert(dut.alloc_addrs[lane] != dut.alloc_addrs[previous])
+    m.d.comb += Cover(dut.done & ~dut.oom & (expected_count == lane + 1))
   verify.prove(depth=8)
 
 
 if __name__ == "__main__":
   tests = [
-    verify_idle,
-    verify_one_bump_alloc,
-    verify_two_bump_allocs,
-    verify_consecutive_bump_allocs,
-    verify_capacity_boundaries,
-    verify_repeated_oom,
-    verify_free_waits_and_captures_address,
-    verify_realloc_then_bump,
-    verify_free_list_lifo,
-    verify_delayed_reuse,
-    verify_oom_recovery,
-    verify_free_all_and_reallocate,
-    verify_repeated_reuse,
-    verify_allocation_priority,
-    verify_arbitrary_bump_requests,
+    verify_idle, verify_one_bump_alloc, verify_two_bump_allocs,
+    verify_consecutive_bump_allocs, verify_capacity_boundaries, verify_repeated_oom,
+    verify_free_waits_and_captures_address, verify_realloc_then_bump,
+    verify_free_list_lifo, verify_delayed_reuse, verify_oom_recovery,
+    verify_free_all_and_reallocate, verify_repeated_reuse, verify_allocation_priority,
+    verify_vector_bump, verify_vector_free_captures_inputs, verify_vector_reuse,
+    verify_vector_mixed_allocation, verify_vector_mixed_multiple_frees,
+    verify_vector_oom_is_atomic, verify_vector_partial_capacity,
+    verify_vector_repeated_batches, verify_arbitrary_bump_requests,
   ]
+  failures = []
   for test in tests:
-    test()
+    try:
+      test()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+      failures.append(test.__name__)
+      print(f"FAIL {test.__name__}: {error}", flush=True)
+  print(f"Allocator test groups: {len(tests) - len(failures)} passed, {len(failures)} failed")
+  if failures:
+    print("Failed groups: " + ", ".join(failures))
+  raise SystemExit(bool(failures))
