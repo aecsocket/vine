@@ -2,7 +2,8 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from ivga import Port, Stat, Tag, flatten
+from ivga import Addr, Port, Stat, Tag, flatten
+from ivga.mem.alloc import AllocPort
 
 from .link import LinkPort
 
@@ -16,20 +17,26 @@ class InteractPort(wiring.Signature):
       "done": In(1),
       # stats
       "stat_annihilate": In(Stat),
+      "stat_copy": In(Stat),
+      "stat_commute": In(Stat),
       "stat_reset": Out(1),
     })
 
 IDLE = "idle"
 ANNIHILATE_1 = "annihilate_1"
 ANNIHILATE_2 = "annihilate_2"
+COPY_1 = "copy_1"
+COPY_2 = "copy_2"
 
 class Interact(wiring.Component):
   control: In(InteractPort())
   link: Out(LinkPort())
+  alloc: Out(AllocPort())
 
   def __init__(self):
     self.a = Signal(Port)
     self.b = Signal(Port)
+    self.alloc_addrs = Signal(Addr).array(4)
     super().__init__()
     flatten(self, self.control)
 
@@ -44,6 +51,17 @@ class Interact(wiring.Component):
         annihilate_1(self, m)
       with m.State(ANNIHILATE_2):
         annihilate_2(self, m)
+      with m.State(COPY_1):
+        copy_1(self, m)
+      with m.State(COPY_2):
+        copy_2(self, m)
+
+    with m.If(self.stat_reset):
+      m.d.sync += [
+        self.stat_annihilate.eq(0),
+        self.stat_copy.eq(0),
+        self.stat_commute.eq(0),
+      ]
 
     return m
 
@@ -68,6 +86,25 @@ def do_interact_(interact: Interact, m: Module, a, b):
     LinkPort.link(m, interact.link, a1, b1)
     m.next = ANNIHILATE_1
 
+  with m.Elif(
+    (a.tag == Tag.COMB & b.tag == Tag.COMB)
+    | (a.tag == Tag.COMB & b.tag == Tag.EXT_FN)
+    | (a.tag == Tag.EXT_FN & b.tag == Tag.COMB)
+  ):
+    # (Comb|ExtFn) >-< (Comb|ExtFn); if two Combs,
+    # they must not have the same label; so we commute
+    AllocPort.alloc(m, interact.alloc)
+    m.next = COMMUTE_ALLOC_1
+
+  with m.Elif(a.tag == Tag.ERASE):
+    # Erase >-< B (B1, B2)
+    # becomes
+    # (Erase >-< B1, Erase >-< B2)
+    b1, _ = Port.aux(m, b)
+    LinkPort.link(m, interact.link, a, b1)
+    m.next = COPY_1
+
+
 def annihilate_1(interact: Interact, m: Module):
   a1, a2 = Port.aux(m, interact.a)
   b1, b2 = Port.aux(m, interact.b)
@@ -88,3 +125,50 @@ def annihilate_2(interact: Interact, m: Module):
       interact.stat_annihilate.eq(interact.stat_annihilate + 1),
     ]
     m.next = IDLE
+
+def copy_1(interact: Interact, m: Module):
+  b1, b2 = Port.aux(m, interact.b)
+  LinkPort.link(m, interact.link, interact.a, b1)
+  with m.If(interact.link.done):
+    # Erase >-< B1 linked
+    LinkPort.link(m, interact.link, interact.a, b2)
+    m.next = COPY_2
+
+def copy_2(interact: Interact, m: Module):
+  _, b2 = Port.aux(m, interact.b)
+  LinkPort.link(m, interact.link, interact.a, b2)
+  with m.If(interact.link.done):
+    # Erase >-< B2 linked
+    m.d.sync += [
+      interact.done.eq(True),
+      interact.stat_copy.eq(interact.stat_copy + 1),
+    ]
+    m.next = IDLE
+
+def commute_alloc_1(interact: Interact, m: Module):
+  AllocPort.alloc(m, interact.alloc)
+  with m.If(interact.alloc.done):
+    m.d.sync += interact.alloc_addrs[0].eq(interact.alloc.alloc_addr)
+    AllocPort.alloc(m, interact.alloc)
+    m.next = COMMUTE_ALLOC_2
+
+def commute_alloc_2(interact: Interact, m: Module):
+  AllocPort.alloc(m, interact.alloc)
+  with m.If(interact.alloc.done):
+    m.d.sync += interact.alloc_addrs[1].eq(interact.alloc.alloc_addr)
+    AllocPort.alloc(m, interact.alloc)
+    m.next = COMMUTE_ALLOC_3
+
+def commute_alloc_3(interact: Interact, m: Module):
+  AllocPort.alloc(m, interact.alloc)
+  with m.If(interact.alloc.done):
+    m.d.sync += interact.alloc_addrs[2].eq(interact.alloc.alloc_addr)
+    AllocPort.alloc(m, interact.alloc)
+    m.next = COMMUTE_ALLOC_4
+
+def commute_alloc_4(interact: Interact, m: Module):
+  AllocPort.alloc(m, interact.alloc)
+  with m.If(interact.alloc.done):
+    m.d.sync += interact.alloc_addrs[3].eq(interact.alloc.alloc_addr)
+    AllocPort.alloc(m, interact.alloc)
+    m.next = COMMUTE_LINK_1

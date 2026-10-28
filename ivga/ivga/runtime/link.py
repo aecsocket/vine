@@ -1,9 +1,9 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
+from ivga.mem import AllocPort, HeapPort, StackPort
 
 from ivga import Port, Port2, Stat, Tag, flatten
-from ivga.mem import AllocPort, HeapPort, StackPort
 
 from .fault import FaultPort
 

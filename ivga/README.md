@@ -75,3 +75,9 @@ anyways assuming we keep it split, then the link needs to add a count, and the i
 i think the 2nd approach makes more sense, but we have to dedicate another 64 bits for the counter. (or acc we can use smaller registers)
 
 WAIT i actually might be completely wrong. linking only erases, interactions may annihilate. just read the IVM source, yes that looks right. ok so we dont have to worry about this yippee. I confused erasure for annihilation
+
+## 28 Oct
+
+Working on the rest of the interactions in the interactor. do we *really* have to wait 2 times for the linker? what if we had 2 linker units for erase/copy? or 4 for commutation? I know we still have competition on the heap/alloc arbiter, but..? Something to experiment with. Might speed up the interact engine to do things in less cycles.
+
+what about vectorized/wide allocations?

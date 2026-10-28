@@ -8,6 +8,18 @@ from .heap import HeapPort
 
 
 class AllocPort(wiring.Signature):
+  """
+  # Operations
+
+  - `req_alloc()`: request to allocate 1 word on the heap.
+    Raises `done` when done; if enough memory was available, `alloc_addr` is the
+    address of the allocated word. Otherwise, raises `oom` and does not allocate
+    any memory.
+
+  - `req_free()`: request to free the word at address `free_addr`.
+    Raises `done` when done.
+  """
+
   def __init__(self):
     super().__init__({
       "req_alloc": Out(1),
