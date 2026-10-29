@@ -54,12 +54,16 @@ class Port(_data.Struct):
     return _am.Const({"tag": Tag.INVALID, "payload": 0, "label": 0}, Port)
 
   @staticmethod
+  def wire(addr):
+    return _am.Const({"tag": Tag.WIRE, "payload": addr, "label": 0}, Port)
+
+  @staticmethod
   def eraser():
     return _am.Const({"tag": Tag.ERASE, "payload": 0, "label": 0}, Port)
 
   @staticmethod
-  def wire(addr):
-    return _am.Const({"tag": Tag.WIRE, "payload": addr, "label": 0}, Port)
+  def comb(addr, label):
+    return _am.Const({"tag": Tag.COMB, "payload": addr, "label": label}, Port)
 
 
 assert Port.as_shape().size == WORD_WIDTH
