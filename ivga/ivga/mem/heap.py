@@ -51,6 +51,15 @@ class HeapPort(wiring.Signature):
       heap.write_data.eq(data),
     ]
 
+  @staticmethod
+  def swap(m: Module, heap, addr, data):
+    m.d.comb += [
+      heap.read.eq(True),
+      heap.write.eq(True),
+      heap.addr.eq(addr),
+      heap.write_data.eq(data),
+    ]
+
 
 class Heap(wiring.Component):
   control: In(HeapPort())

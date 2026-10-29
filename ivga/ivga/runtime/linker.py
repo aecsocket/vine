@@ -16,6 +16,7 @@ class LinkerPort(wiring.Signature):
       "req_link": Out(1),
       "req_a": Out(Port),
       "req_b": Out(Port),
+      "granted": In(1),
       "done": In(1),
       # stats
       "stat_erase": In(Stat),
@@ -25,14 +26,15 @@ class LinkerPort(wiring.Signature):
   @staticmethod
   def link(m: Module, linker, a, b):
     m.d.comb += [
-      linker.req_linker.eq(True),
+      linker.req_link.eq(True),
       linker.req_a.eq(a),
       linker.req_b.eq(b),
     ]
 
 IDLE = "idle"
 DO_LINK = "do_link"
-FOLLOW = "follow"
+FOLLOW_REQ = "follow_req"
+FOLLOW_WAIT = "follow_wait"
 CONNECT = "connect"
 CONNECT_FREE = "connect_free"
 CONNECT_SWAP = "connect_swap"
@@ -60,42 +62,43 @@ class Linker(wiring.Component):
 
     with m.FSM(init=IDLE):
       with m.State(IDLE):
-        idle(self, m)
+        idle(m, self)
       with m.State(DO_LINK):
-        do_link_(self, m, self.a, self.b)
-      with m.State(FOLLOW):
-        follow(self, m)
+        do_link(m, self, self.a, self.b)
+      with m.State(FOLLOW_REQ):
+        follow_req(m, self, self.b.payload)
+      with m.State(FOLLOW_WAIT):
+        follow_wait(m, self)
       with m.State(CONNECT):
-        connect_(self, m, self.a, self.b)
+        connect(m, self, self.a, self.b)
       with m.State(CONNECT_FREE):
-        connect_free(self, m)
+        connect_free(m, self)
       with m.State(CONNECT_SWAP):
-        connect_swap(self, m)
+        connect_swap(m, self)
       with m.State(CONNECT_SWAP_FREE):
-        connect_swap_free(self, m)
+        connect_swap_free(m, self)
       with m.State(FOLLOW_FREE):
-        follow_free(self, m)
+        follow_free(m, self)
 
     return m
 
-def idle(linker: Linker, m: Module):
+def idle(m: Module, linker: Linker):
   with m.If(linker.req_link):
     m.d.sync += [
       linker.a.eq(linker.req_a),
       linker.b.eq(linker.req_b),
     ]
-    do_link_(linker, m, linker.req_a, linker.req_b)
+    do_link(m, linker, linker.req_a, linker.req_b)
 
-def do_link_(linker: Linker, m: Module, a, b):
+def do_link(m: Module, linker: Linker, a, b):
   with m.If(a.tag == Tag.WIRE):
     with m.If(b.tag == Tag.WIRE):
       # A and B are wires; follow B to the end
       # then link A and the tail of B
-      HeapPort.read(m, linker.heap, b.payload)
-      m.next = FOLLOW
+      follow_req(m, linker, b.payload)
     with m.Else():
       # A is a wire, but B isn't, so we can go straight to connecting
-      connect_(linker, m, a, b)
+      connect(m, linker, a, b)
 
   with m.Elif(b.tag == Tag.WIRE):
     # A must not be a wire; go straight to connecting
@@ -103,7 +106,7 @@ def do_link_(linker: Linker, m: Module, a, b):
       linker.a.eq(b),
       linker.b.eq(a),
     ]
-    connect_(linker, m, b, a)
+    connect(m, linker, b, a)
 
   with m.Elif(
     ((a.tag == Tag.GRAFT) | (a.tag == Tag.ERASE))
@@ -159,8 +162,14 @@ def do_link_(linker: Linker, m: Module, a, b):
 #   with m.Else():
 #     m.d.sync += Assert(False, "all tag combinations should be handled")
 
-def follow(linker: Linker, m: Module):
-  HeapPort.read(m, linker.heap, linker.b.payload)
+def follow_req(m: Module, linker: Linker, b_payload):
+  HeapPort.read(m, linker.heap, b_payload)
+  with m.If(linker.heap.granted):
+    m.next = FOLLOW_WAIT
+  with m.Else():
+    m.next = FOLLOW_REQ
+
+def follow_wait(m: Module, linker: Linker):
   with m.If(linker.heap.done):
     # fetched heap[B.payload]
     target = Port(linker.heap.read_data)
@@ -173,7 +182,7 @@ def follow(linker: Linker, m: Module):
       # since both follow and connect steps use the heap.
       # so we may have to wait for another clock cycle.
       with m.If(linker.a == linker.b):
-        connect_same_wire(linker, m, linker.a, linker.b)
+        connect_same_wire(m, linker, linker.a, linker.b)
       with m.Else():
         m.next = CONNECT
     with m.Else():
@@ -185,7 +194,7 @@ def follow(linker: Linker, m: Module):
       m.d.sync += linker.previous.eq(target)
       m.next = FOLLOW_FREE
 
-def connect_same_wire(linker: Linker, m: Module, a, b):
+def connect_same_wire(m: Module, linker: Linker, a, b):
   # A's bits compose a wire, and B has the same bits,
   # so B is the same wire as A.
   # so we just free `A.payload`, and don't do any real connecting.
@@ -193,24 +202,23 @@ def connect_same_wire(linker: Linker, m: Module, a, b):
   m.next = CONNECT_FREE
 
 
-def connect_(linker: Linker, m: Module, a, b):
+def connect(m: Module, linker: Linker, a, b):
   # we're done following wires
   with m.If(a == b):
-    connect_same_wire(linker, m, a, b)
+    connect_same_wire(m, linker, a, b)
   with m.Else():
     # swap_target(A as Wire, B)
     # => swap(&mut heap[A.payload], B)
-    HeapPort.read(m, linker.heap, a.payload)
-    HeapPort.write(m, linker.heap, a.payload, b)
+    HeapPort.swap(m, linker.heap, a.payload, b)
     m.next = CONNECT_SWAP
 
-def connect_free(linker: Linker, m: Module):
+def connect_free(m: Module, linker: Linker):
   AllocPort.free_one(m, linker.alloc, linker.a.payload)
   with m.If(linker.alloc.done):
     m.d.sync += linker.done.eq(True)
     m.next = IDLE
 
-def connect_swap(linker: Linker, m: Module):
+def connect_swap(m: Module, linker: Linker):
   HeapPort.read(m, linker.heap, linker.a.payload)
   HeapPort.write(m, linker.heap, linker.a.payload, linker.b)
   with m.If(linker.heap.done):
@@ -229,17 +237,17 @@ def connect_swap(linker: Linker, m: Module):
       AllocPort.free_one(m, linker.alloc, linker.a.payload)
       m.next = CONNECT_SWAP_FREE
 
-def connect_swap_free(linker: Linker, m: Module):
+def connect_swap_free(m: Module, linker: Linker):
   AllocPort.free_one(m, linker.alloc, linker.a.payload)
   with m.If(linker.alloc.done):
     # A.payload is freed, do `link(previous, b)`
     m.d.sync += linker.a.eq(linker.previous)
-    do_link_(linker, m, linker.previous, linker.b)
+    do_link(m, linker, linker.previous, linker.b)
 
-def follow_free(linker: Linker, m: Module):
+def follow_free(m: Module, linker: Linker):
   AllocPort.free_one(m, linker.alloc, linker.b.payload)
   with m.If(linker.alloc.done):
     # old intermediate wire has been freed,
     # continue `link(a, previous)`
     m.d.sync += linker.b.eq(linker.previous)
-    do_link_(linker, m, linker.a, linker.previous)
+    do_link(m, linker, linker.a, linker.previous)
