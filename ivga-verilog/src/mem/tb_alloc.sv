@@ -120,7 +120,7 @@ task automatic free_block(input addr_t addr, input addr_t previous_head);
     alloc_bus.free = 1'b1;
     @(negedge clk);
     alloc_bus.free = 1'b0;
-    // The allocator must retain the accepted address, not use live inputs later.
+    // The allocator must retain the granted address, not use live inputs later.
     alloc_bus.free_addr = ADDR_NONE;
 
     wait_done("free");

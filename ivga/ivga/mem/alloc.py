@@ -2,7 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
-from ivga.util.arbiter import Arbiter
+from ivga.util.arbiter import make_arbiter_type
 
 from ivga import ADDR_MAX, Addr, Stat, flatten
 
@@ -30,6 +30,7 @@ class AllocPort(wiring.Signature):
       "req_free": Out(range(LANES + 1)),
       "free_addrs": Out(ArrayLayout(Addr, LANES)),
       "alloc_addrs": In(ArrayLayout(Addr, LANES)),
+      "granted": In(1),
       "done": In(1),
       "oom": In(1),
       # stats
@@ -59,7 +60,9 @@ class AllocPort(wiring.Signature):
 
 
 IDLE = "idle"
+ALLOC_REQ = "alloc_req"
 ALLOC_WAIT = "alloc_wait"
+FREE_REQ = "free_req"
 FREE_WAIT = "free_wait"
 
 ADDR_EMPTY = Const(ADDR_MAX, Addr)
@@ -91,11 +94,15 @@ class Alloc(wiring.Component):
 
     with m.FSM(init=IDLE):
       with m.State(IDLE):
-        idle(self, m)
+        idle(m, self)
+      with m.State(ALLOC_REQ):
+        alloc_req(m, self, self.free_head)
       with m.State(ALLOC_WAIT):
-        alloc_wait(self, m)
+        alloc_wait(m, self)
+      with m.State(FREE_REQ):
+        free_req(m, self, self.free_addrs_arr[self.free_addrs_top], self.free_head)
       with m.State(FREE_WAIT):
-        free_wait(self, m)
+        free_wait(m, self)
 
     # stats
     with m.If(self.stat_reset):
@@ -109,8 +116,9 @@ class Alloc(wiring.Component):
 
     return m
 
-def idle(alloc: Alloc, m: Module):
+def idle(m: Module, alloc: Alloc):
   available = alloc.capacity - alloc.empty + alloc.free_count
+  m.d.comb += alloc.granted.eq(True)
 
   with m.If(alloc.req_alloc > 0):
     with m.If(alloc.req_alloc > available):
@@ -124,10 +132,9 @@ def idle(alloc: Alloc, m: Module):
       # first read the value at the free head
       # e.g. free_head = 10, heap[free_head] = ?
       m.d.sync += alloc.alloc_top.eq(alloc.req_alloc - 1)
-      HeapPort.read(m, alloc.heap, alloc.free_head)
-      m.next = ALLOC_WAIT
+      alloc_req(m, alloc, alloc.free_head)
     with m.Else():
-      bump_alloc(alloc, m, alloc.req_alloc, 0)
+      bump_alloc(m, alloc, alloc.req_alloc, 0)
 
   with m.Elif(alloc.req_free > 0):
     # set `heap[alloc.free_addrs[top]]` to the current free head
@@ -140,10 +147,9 @@ def idle(alloc: Alloc, m: Module):
       alloc.free_addrs_top.eq(top),
       alloc.free_addrs_arr.eq(alloc.free_addrs),
     ]
-    HeapPort.write(m, alloc.heap, alloc.free_addrs[top], alloc.free_head)
-    m.next = FREE_WAIT
+    free_req(m, alloc, alloc.free_addrs[top], alloc.free_head)
 
-def bump_alloc(alloc: Alloc, m: Module, n, extra_allocs: int):
+def bump_alloc(m: Module, alloc: Alloc, n, extra_allocs: int):
   # wire up only lanes up to `n`,
   # since this is for both the bump-only and mixed alloc paths
   for lane in range(LANES):
@@ -157,15 +163,21 @@ def bump_alloc(alloc: Alloc, m: Module, n, extra_allocs: int):
   ]
   m.next = IDLE
 
-def alloc_wait(alloc: Alloc, m: Module):
-  # wait for heap[free_head] to return
-  # keep heap wires stable while waiting
-  HeapPort.read(m, alloc.heap, alloc.free_head)
+def alloc_req(m: Module, alloc: Alloc, free_head):
+  HeapPort.read(m, alloc.heap, free_head)
+  with m.If(alloc.heap.granted):
+    m.next = ALLOC_WAIT
+  with m.Else():
+    m.next = ALLOC_REQ
+
+def alloc_wait(m: Module, alloc: Alloc):
   with m.If(alloc.heap.done):
+    next_free_head = alloc.heap.read_data
+
     m.d.sync += [
       alloc.alloc_addrs[alloc.alloc_top].eq(alloc.free_head),
       alloc.alloc_top.eq(alloc.alloc_top - 1),
-      alloc.free_head.eq(alloc.heap.read_data),
+      alloc.free_head.eq(next_free_head),
       alloc.free_count.eq(alloc.free_count - 1),
       # note: if we go into the bump_alloc branch, we lose this write.
       # that's why we specify the `1` in the call below.
@@ -175,18 +187,28 @@ def alloc_wait(alloc: Alloc, m: Module):
     with m.If(alloc.alloc_top == 0):
       m.d.sync += alloc.done.eq(True),
       m.next = IDLE
-    with m.Elif(alloc.heap.read_data == ADDR_EMPTY):
-      # free list is empty but we need more; bump allocate
+    with m.Elif(next_free_head == ADDR_EMPTY):
+      # we need more words, but free list is empty; bump allocate
       # bump alloc'ing is safe since we checked this in idle
-      bump_alloc(alloc, m, alloc.alloc_top, 1)
+      bump_alloc(m, alloc, alloc.alloc_top, 1)
+    with m.Else():
+      # we need more words; take from free list
+      alloc_req(m, alloc, next_free_head)
 
-def free_wait(alloc: Alloc, m: Module):
-  # wait for memory write to complete
-  # keep heap wires stable while waiting
-  HeapPort.write(m, alloc.heap, alloc.free_addrs_arr[alloc.free_addrs_top], alloc.free_head)
+
+def free_req(m: Module, alloc: Alloc, top, free_head):
+  HeapPort.write(m, alloc.heap, top, free_head)
+  with m.If(alloc.heap.granted):
+    m.next = FREE_WAIT
+  with m.Else():
+    m.next = FREE_REQ
+
+def free_wait(m: Module, alloc: Alloc):
   with m.If(alloc.heap.done):
+    next_free_head = alloc.free_addrs_arr[alloc.free_addrs_top]
+
     m.d.sync += [
-      alloc.free_head.eq(alloc.free_addrs_arr[alloc.free_addrs_top]),
+      alloc.free_head.eq(next_free_head),
       alloc.free_count.eq(alloc.free_count + 1),
       alloc.free_addrs_top.eq(alloc.free_addrs_top - 1),
       alloc.stat_frees.eq(alloc.stat_frees + 1),
@@ -195,26 +217,13 @@ def free_wait(alloc: Alloc, m: Module):
     with m.If(alloc.free_addrs_top == 0):
       m.d.sync += alloc.done.eq(True)
       m.next = IDLE
-    # else keep looping
+    with m.Else():
+      next_top = (alloc.free_addrs_top - 1).as_unsigned()
+      free_req(m, alloc, alloc.free_addrs_arr[next_top], next_free_head)
 
 
-class AllocArbiter(wiring.Component):
-  def __init__(self, width: int):
-    self.width = width
-    super().__init__({
-      "clients": In(AllocPort()).array(width),
-      "real": Out(AllocPort()),
-    })
-
-  def elaborate(self, platform):
-    m = Module()
-
-    arbiter = m.submodules.arbiter = Arbiter(self.width)
-
-    for i, client in enumerate(self.clients):
-      wants = client.req_alloc | client.req_free
-      m.d.comb += arbiter.request[i].eq(wants)
-      with m.If(arbiter.grant[i]):
-        wiring.connect(m, wiring.flipped(self.real), wiring.flipped(client))
-
-    return m
+AllocArbiter = make_arbiter_type(
+  AllocPort,
+  lambda client: (client.req_alloc != 0) | (client.req_free != 0),
+  exclude=("stat_allocs", "stat_frees", "stat_peak", "stat_reset"),
+)

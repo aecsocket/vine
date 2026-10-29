@@ -12,11 +12,11 @@ from ivga import Port, Port2, Stat, flatten
 
 
 class LinkerBatchPort(wiring.Signature):
-  def __init__(self, batch: int):
+  def __init__(self, width: int):
     super().__init__({
-      "req_link": Out(range(batch + 1)),
-      "req_a": Out(ArrayLayout(Port, batch)),
-      "req_b": Out(ArrayLayout(Port, batch)),
+      "req_link": Out(range(width + 1)),
+      "req_a": Out(ArrayLayout(Port, width)),
+      "req_b": Out(ArrayLayout(Port, width)),
       "done": In(1),
       # stats
       "stat_erase": In(Stat),
@@ -24,19 +24,22 @@ class LinkerBatchPort(wiring.Signature):
     })
 
   @staticmethod
-  def link(m: Module, link_batch, count, a, b):
+  def link(m: Module, batch, count, a, b):
     m.d.comb += [
-      link_batch.req_link.eq(count),
-      link_batch.req_a.eq(a),
-      link_batch.req_b.eq(b),
+      batch.req_link.eq(count),
+      batch.req_a.eq(a),
+      batch.req_b.eq(b),
     ]
 
+IDLE = "idle"
+WAIT = "wait"
+
 class LinkerBatch(wiring.Component):
-  def __init__(self, batch: int):
-    assert batch > 0
+  def __init__(self, width: int):
+    assert width > 0
 
     super().__init__({
-      "control": In(LinkerBatchPort(batch)),
+      "control": In(LinkerBatchPort(width)),
       "heap": Out(HeapPort()),
       "alloc": Out(AllocPort()),
       "active": Out(StackPort(Port2)),
@@ -48,12 +51,16 @@ class LinkerBatch(wiring.Component):
     m = Module()
     m.d.sync += self.done.eq(False)
 
-
-
     linkers = []
     for i in range(self.batch):
       m.submodules[f"linker_{i}"] = linker = Linker()
       linkers.append(linker)
+
+    with m.FSM(init=IDLE):
+      with m.State(IDLE):
+        idle(self, m)
+      with m.State(WAIT):
+        wait(self, m)
 
     for i, linker in enumerate(linkers):
       m.d.comb += [

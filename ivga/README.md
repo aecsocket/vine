@@ -8,6 +8,7 @@
 - https://nandland.com/lesson-1-what-is-an-fpga/
 - https://blog.rhye.org/post/fpgas-for-software-engineers-0-basics/
   - https://x.com/ludwigABAP/status/1873080552821297222
+- https://fpgacpu.ca/fpga/outline.html
 
 ## nandland
 
@@ -94,3 +95,11 @@ Going back to an earlier design decision rn. The interactor is wired to a link u
 - in the IVM runtime setup - linking the IO port up
 
 This is a very small inventory of callsites... we can give the interactor its own 8 linker submodules, then we instantiate 1 extra linker for runtime setup that remains mostly unused. Then the interactor has to arbitrate memory access tho. That's.. less than ideal but we would need to arbitrate memory access anyway. And of course we can play around with this later - if we need to reduce silicon space/LUT usage, we can give an interact unit 4 linker units + split commutation into 2 FSM states. Or 2 LUs + 4 states.
+
+Ok I think I managed to implement arbiters in a very clean and simple way. We have a generic `Arbiter` which just does the round-robin prio logic, takes in a `request` and outputs a `grant` bitfield. Then we have `AllocArbiter`, `HeapArbiter` etc. which just use that and when a client wins a request, we `wiring.connect` the two up. The `*Arbiter` classes are all almost exactly the same, apart from what constitutes a "client wants a request" signal, which is pretty cool. I'm no expert but I think this is a clean implementation.
+
+nevermind my arbiter transactional model is wrong FUUCKKKK
+
+## 29 Oct
+
+GPT linked me this https://fpgacpu.ca/fpga/outline.html - looks useful.

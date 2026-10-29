@@ -2,8 +2,9 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.memory import Memory, ReadPort, WritePort
 from amaranth.lib.wiring import In, Out
+from ivga.util.arbiter import make_arbiter_type
 
-from ivga import Word, flatten
+from ivga import flatten
 
 
 class StackPort(wiring.Signature):
@@ -15,11 +16,12 @@ class StackPort(wiring.Signature):
 
   - `req_pop()`: pop the last value off the stack and place it into `pop_data`.
     Must only be raised if `~empty`.
+
+  The shape of data on the stack is not required to be a word, since the stack
+  doesn't use `Heap`.
   """
 
   def __init__(self, shape):
-    assert Shape.cast(shape).width == Shape.cast(Word).width
-
     super().__init__({
       "req_push": Out(1),
       "push_data": Out(shape),
@@ -27,6 +29,7 @@ class StackPort(wiring.Signature):
       "req_pop": Out(1),
       "pop_data": In(shape),
 
+      "granted": In(1),
       "done": In(1),
       "empty": In(1),
       "full": In(1),
@@ -46,7 +49,6 @@ class StackPort(wiring.Signature):
 class Stack(wiring.Component):
   def __init__(self, shape, depth: int):
     assert depth > 0
-    assert Shape.cast(shape).width == Shape.cast(Word).width
 
     self.shape = shape
     self.depth = depth
@@ -90,6 +92,9 @@ class Stack(wiring.Component):
     with m.Elif(self.req_pop):
       pop(self, m, mem_read, mem_write)
 
+    has_request = self.req_push | self.req_pop
+    m.d.comb += self.granted.eq(has_request)
+
     return m
 
 def push(stack: Stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
@@ -114,3 +119,9 @@ def pop(stack: Stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
       stack.top.eq(stack.top - 1),
       stack.done.eq(True),
     ]
+
+StackArbiter = make_arbiter_type(
+  StackPort,
+  lambda client: client.req_push | client.req_pop,
+  always_out=("empty", "full"),
+)
