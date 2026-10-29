@@ -65,16 +65,17 @@ class Heap(wiring.Component):
   control: In(HeapPort())
 
   def __init__(self):
+    self.memory = Memory(
+      shape=Word,
+      depth=CAPACITY,
+      init=[],
+    )
     super().__init__()
     flatten(self, self.control)
 
   def elaborate(self, platform):
     m = Module()
-    memory = m.submodules.memory = Memory(
-      shape=Word,
-      depth=CAPACITY,
-      init=[]
-    )
+    memory = m.submodules.memory = self.memory
     read = memory.read_port()
     write = memory.write_port()
 

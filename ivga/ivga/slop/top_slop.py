@@ -17,7 +17,7 @@ from amaranth.lib import io, wiring
 from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out
 
-from ivga import ERASER, PORT_EMPTY, Port, Port2, Tag
+from ivga import PORT_ERASER, PORT_INVALID, Port, Port2, Tag
 from ivga.mem.alloc import Alloc
 from ivga.mem.heap import make_heap
 from ivga.mem.stack import Stack
@@ -202,7 +202,7 @@ class Processor(wiring.Component):
           write_enable.eq(True), heap_write.addr.eq(init_addr),
           heap_write.data.eq(Mux(
             self.selection[0] & (init_addr >= base) & (init_addr < base + 4),
-            Const(ERASER, Port).as_value(), PORT_EMPTY.as_value(),
+            Const(PORT_ERASER, Port).as_value(), PORT_INVALID.as_value(),
           )),
         ]
         with core.If(init_addr == heap.depth - 1):

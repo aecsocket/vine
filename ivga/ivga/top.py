@@ -2,7 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from ivga import ERASER, Port
+from ivga import PORT_ERASER, Port
 from ivga.mem.alloc import Alloc
 from ivga.mem.heap import make_heap
 from ivga.runtime.interact import Interact
@@ -72,8 +72,8 @@ class Processor(wiring.Component):
         heap_write.data.eq(link.heap.write_data),
       ]
 
-    a = Const(ERASER, Port)
-    b = Const(ERASER, Port)
+    a = Const(PORT_ERASER, Port)
+    b = Const(PORT_ERASER, Port)
 
     m.d.comb += [
       interact.req_interact.eq(True),

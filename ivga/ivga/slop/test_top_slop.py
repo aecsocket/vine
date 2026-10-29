@@ -9,7 +9,7 @@ import unittest
 from amaranth import Const, Module, Signal
 from amaranth.sim import Simulator
 
-from ivga import PORT_EMPTY, Port, Tag
+from ivga import PORT_INVALID, Port, Tag
 from ivga.mem.alloc import ADDR_EMPTY
 from ivga.slop.read_stats import FIELDS as READER_FIELDS
 from ivga.slop.read_stats import MAX_FRAME_BYTES, parse_snapshot
@@ -41,7 +41,7 @@ def expected_counters(selection):
 
 
 def expected_heap(selection, depth):
-  words = [PORT_EMPTY.as_value().value] * depth
+  words = [PORT_INVALID.as_value().value] * depth
   base = (selection >> 2) * 4
   if selection & 1:
     # Eraser linking frees B0, A0, B1, A1, storing the previous free head.

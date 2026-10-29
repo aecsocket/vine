@@ -6,7 +6,7 @@ from ivga.mem.heap import Heap, HeapArbiter
 from ivga.mem.stack import Stack
 from ivga.runtime.linker import Linker
 
-from ivga import ERASER, Port2
+from ivga import Port, Port2
 
 PERIOD = 1e-6
 
@@ -18,17 +18,24 @@ active = m.submodules.active = Stack(Port2, 8)
 dut = m.submodules.linker = Linker()
 wiring.connect(m, heap_arb.clients[0], alloc.heap)
 wiring.connect(m, heap_arb.clients[1], dut.heap)
+wiring.connect(m, heap_arb.real, heap.control)
 wiring.connect(m, dut.alloc, alloc.control)
 wiring.connect(m, dut.active, active.control)
 
 async def testbench_foo(ctx):
-  assert ctx.get(dut.done) == False
+  ctx.set(heap.memory.data[0], Port.invalid())
+  ctx.set(heap.memory.data[1], Port.wire(2))
+  ctx.set(heap.memory.data[2], Port.eraser())
+  ctx.set(alloc.empty, Const(3)) # since we've alloc'd 3 slots
   ctx.set(dut.req_link, True)
-  ctx.set(dut.req_a, ERASER)
-  ctx.set(dut.req_b, ERASER)
+  ctx.set(dut.req_a, Port.wire(0))
+  ctx.set(dut.req_b, Port.wire(1))
   await ctx.tick()
   ctx.set(dut.req_link, False)
+
+  await ctx.tick().repeat(7)
   assert ctx.get(dut.done) == True
+  assert ctx.get(heap.memory.data[0]) == Port.eraser().as_value().value
 
 sim = Simulator(m)
 sim.add_clock(PERIOD)
