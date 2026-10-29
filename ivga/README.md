@@ -103,3 +103,5 @@ nevermind my arbiter transactional model is wrong FUUCKKKK
 ## 29 Oct
 
 GPT linked me this https://fpgacpu.ca/fpga/outline.html - looks useful.
+
+Okay, it's getting kinda impossible to write more Amaranth code without addressing something important. *Everywhere* in this code I'm writing like, request alloc -> in the next FSM state, hold alloc high + wait for grant -> in the next FSM state, hold low and wait for done. Repeatedly. And this is happening with alloc, with heap, with stack, everything. it's REALLY hard to follow the actual goddamn control flow. I need to spend some time designing some kind of way to generate this code at a higher level, otherwise I'm gonna go insane.
