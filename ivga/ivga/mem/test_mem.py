@@ -6,15 +6,13 @@ from ivga.mem.heap import Heap
 
 PERIOD = 1e-6
 
-dut = Alloc(8)
-heap = Heap()
-
 m = Module()
-m.submodules.alloc = dut
-m.submodules.heap = heap
+heap = m.submodules.heap = Heap()
+dut = m.submodules.alloc = Alloc(8)
 wiring.connect(m, dut.heap, heap.control)
 
 async def testbench_foo(ctx):
+  assert ctx.get(dut.done) == False
   ctx.set(dut.req_alloc, 2)
   await ctx.tick()
   ctx.set(dut.req_alloc, 0)

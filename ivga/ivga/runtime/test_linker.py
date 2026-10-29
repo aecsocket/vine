@@ -1,0 +1,37 @@
+from amaranth import *
+from amaranth.lib import wiring
+from amaranth.sim import Simulator
+from ivga.mem.alloc import Alloc
+from ivga.mem.heap import Heap, HeapArbiter
+from ivga.mem.stack import Stack
+from ivga.runtime.linker import Linker
+
+from ivga import ERASER, Port2
+
+PERIOD = 1e-6
+
+m = Module()
+heap = m.submodules.heap = Heap()
+heap_arb = m.submodules.heap_arb = HeapArbiter(2)
+alloc = m.submodules.alloc = Alloc(8)
+active = m.submodules.active = Stack(Port2, 8)
+dut = m.submodules.linker = Linker()
+wiring.connect(m, heap_arb.clients[0], alloc.heap)
+wiring.connect(m, heap_arb.clients[1], dut.heap)
+wiring.connect(m, dut.alloc, alloc.control)
+wiring.connect(m, dut.active, active.control)
+
+async def testbench_foo(ctx):
+  assert ctx.get(dut.done) == False
+  ctx.set(dut.req_link, True)
+  ctx.set(dut.req_a, ERASER)
+  ctx.set(dut.req_b, ERASER)
+  await ctx.tick()
+  ctx.set(dut.req_link, False)
+  assert ctx.get(dut.done) == True
+
+sim = Simulator(m)
+sim.add_clock(PERIOD)
+sim.add_testbench(testbench_foo)
+with sim.write_vcd("build/test_linker.vcd"):
+  sim.run()

@@ -33,13 +33,22 @@ class LinkerPort(wiring.Signature):
 
 IDLE = "idle"
 DO_LINK = "do_link"
+# follow wire B to the end
 FOLLOW_REQ = "follow_req"
 FOLLOW_WAIT = "follow_wait"
+# free A.payload and finish
+FREE_A_FINISH_REQ = "free_a_finish_req"
+FREE_A_FINISH_WAIT = "free_a_finish_wait"
+# free A.payload, and continue link(previous, b)
+FREE_A_CONTINUE_REQ = "free_a_continue_req"
+FREE_A_CONTINUE_WAIT = "free_a_continue_wait"
+# free B.payload, and continue link(a, previous)
+FREE_B_CONTINUE_REQ = "free_b_continue_req"
+FREE_B_CONTINUE_WAIT = "free_b_continue_wait"
+# connect A, B
 CONNECT = "connect"
-CONNECT_FREE = "connect_free"
-CONNECT_SWAP = "connect_swap"
-CONNECT_SWAP_FREE = "connect_swap_free"
-FOLLOW_FREE = "follow_free"
+SWAP_A_TARGET_REQ = "swap_a_target_req"
+SWAP_A_TARGET_WAIT = "swap_a_target_wait"
 
 
 class Linker(wiring.Component):
@@ -65,20 +74,33 @@ class Linker(wiring.Component):
         idle(m, self)
       with m.State(DO_LINK):
         do_link(m, self, self.a, self.b)
+      ##
       with m.State(FOLLOW_REQ):
         follow_req(m, self, self.b.payload)
       with m.State(FOLLOW_WAIT):
         follow_wait(m, self)
+      ##
+      with m.State(FREE_A_FINISH_REQ):
+        free_a_finish_req(m, self, self.a)
+      with m.State(FREE_A_FINISH_WAIT):
+        free_a_finish_wait(m, self)
+      ##
+      with m.State(FREE_A_CONTINUE_REQ):
+        free_a_continue_req(m, self)
+      with m.State(FREE_A_CONTINUE_WAIT):
+        free_a_continue_wait(m, self)
+      ##
+      with m.State(FREE_B_CONTINUE_REQ):
+        free_b_continue_req(m, self)
+      with m.State(FREE_B_CONTINUE_WAIT):
+        free_b_continue_wait(m, self)
+      ##
       with m.State(CONNECT):
         connect(m, self, self.a, self.b)
-      with m.State(CONNECT_FREE):
-        connect_free(m, self)
-      with m.State(CONNECT_SWAP):
-        connect_swap(m, self)
-      with m.State(CONNECT_SWAP_FREE):
-        connect_swap_free(m, self)
-      with m.State(FOLLOW_FREE):
-        follow_free(m, self)
+      with m.State(SWAP_A_TARGET_REQ):
+        swap_a_target_req(m, self, self.a, self.b)
+      with m.State(SWAP_A_TARGET_WAIT):
+        swap_a_target_wait(m, self)
 
     return m
 
@@ -182,7 +204,7 @@ def follow_wait(m: Module, linker: Linker):
       # since both follow and connect steps use the heap.
       # so we may have to wait for another clock cycle.
       with m.If(linker.a == linker.b):
-        connect_same_wire(m, linker, linker.a, linker.b)
+        free_a_finish_req(m, linker, linker.a)
       with m.Else():
         m.next = CONNECT
     with m.Else():
@@ -190,37 +212,72 @@ def follow_wait(m: Module, linker: Linker):
       # - free B.payload, wait for it to be freed, then
       # - continue `link(a, heap[B.payload])`
       #   where `previous = heap[B.payload]`
-      AllocPort.free_one(m, linker.alloc, linker.b.payload)
       m.d.sync += linker.previous.eq(target)
-      m.next = FOLLOW_FREE
+      free_b_continue_req(m, linker)
 
-def connect_same_wire(m: Module, linker: Linker, a, b):
+
+def free_a_finish_req(m: Module, linker: Linker, a):
   # A's bits compose a wire, and B has the same bits,
   # so B is the same wire as A.
   # so we just free `A.payload`, and don't do any real connecting.
   AllocPort.free_one(m, linker.alloc, a.payload)
-  m.next = CONNECT_FREE
+  with m.If(linker.alloc.granted):
+    m.next = FREE_A_FINISH_WAIT
+  with m.Else():
+    m.next = FREE_A_FINISH_REQ
+
+def free_a_finish_wait(m: Module, linker: Linker):
+  with m.If(linker.alloc.done):
+    m.d.sync += linker.done.eq(True)
+    m.next = IDLE
+
+
+def free_a_continue_req(m: Module, linker: Linker):
+  AllocPort.free_one(m, linker.alloc, linker.a.payload)
+  with m.If(linker.alloc.granted):
+    m.next = FREE_A_CONTINUE_WAIT
+  with m.Else():
+    m.next = FREE_A_CONTINUE_REQ
+
+def free_a_continue_wait(m: Module, linker: Linker):
+  with m.If(linker.alloc.done):
+    # A.payload is freed, do `link(previous, b)`
+    m.d.sync += linker.a.eq(linker.previous)
+    do_link(m, linker, linker.previous, linker.b)
+
+
+def free_b_continue_req(m: Module, linker: Linker):
+  AllocPort.free_one(m, linker.alloc, linker.b.payload)
+  with m.If(linker.alloc.granted):
+    m.next = FREE_B_CONTINUE_WAIT
+  with m.Else():
+    m.next = FREE_B_CONTINUE_REQ
+
+def free_b_continue_wait(m: Module, linker: Linker):
+  with m.If(linker.alloc.done):
+    # old intermediate wire has been freed,
+    # continue `link(a, previous)`
+    m.d.sync += linker.b.eq(linker.previous)
+    do_link(m, linker, linker.a, linker.previous)
 
 
 def connect(m: Module, linker: Linker, a, b):
   # we're done following wires
   with m.If(a == b):
-    connect_same_wire(m, linker, a, b)
+    free_a_finish_req(m, linker, a)
   with m.Else():
-    # swap_target(A as Wire, B)
-    # => swap(&mut heap[A.payload], B)
-    HeapPort.swap(m, linker.heap, a.payload, b)
-    m.next = CONNECT_SWAP
+    swap_a_target_req(m, linker, a, b)
 
-def connect_free(m: Module, linker: Linker):
-  AllocPort.free_one(m, linker.alloc, linker.a.payload)
-  with m.If(linker.alloc.done):
-    m.d.sync += linker.done.eq(True)
-    m.next = IDLE
+def swap_a_target_req(m: Module, linker: Linker, a, b):
+  # swap_target(A as Wire, B)
+  # => swap(&mut heap[A.payload], B)
+  HeapPort.swap(m, linker.heap, a.payload, b)
+  with m.If(linker.heap.granted):
+    m.next = SWAP_A_TARGET_WAIT
+  with m.Else():
+    m.next = SWAP_A_TARGET_REQ
 
-def connect_swap(m: Module, linker: Linker):
-  HeapPort.read(m, linker.heap, linker.a.payload)
-  HeapPort.write(m, linker.heap, linker.a.payload, linker.b)
+def swap_a_target_wait(m: Module, linker: Linker):
   with m.If(linker.heap.done):
     # swap complete, `previous = heap[A.payload]`
     previous = Port(linker.heap.read_data)
@@ -234,20 +291,4 @@ def connect_swap(m: Module, linker: Linker):
       # save `previous` into a register
       # cause we need to set `a = previous`
       m.d.sync += linker.previous.eq(previous)
-      AllocPort.free_one(m, linker.alloc, linker.a.payload)
-      m.next = CONNECT_SWAP_FREE
-
-def connect_swap_free(m: Module, linker: Linker):
-  AllocPort.free_one(m, linker.alloc, linker.a.payload)
-  with m.If(linker.alloc.done):
-    # A.payload is freed, do `link(previous, b)`
-    m.d.sync += linker.a.eq(linker.previous)
-    do_link(m, linker, linker.previous, linker.b)
-
-def follow_free(m: Module, linker: Linker):
-  AllocPort.free_one(m, linker.alloc, linker.b.payload)
-  with m.If(linker.alloc.done):
-    # old intermediate wire has been freed,
-    # continue `link(a, previous)`
-    m.d.sync += linker.b.eq(linker.previous)
-    do_link(m, linker, linker.a, linker.previous)
+      free_a_continue_req(m, linker)
