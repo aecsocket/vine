@@ -49,6 +49,9 @@ FREE_B_CONTINUE_WAIT = "free_b_continue_wait"
 CONNECT = "connect"
 SWAP_A_TARGET_REQ = "swap_a_target_req"
 SWAP_A_TARGET_WAIT = "swap_a_target_wait"
+# add a pair to the active worklist
+PUSH_ACTIVE_REQ = "push_active_req"
+PUSH_ACTIVE_WAIT = "push_active_wait"
 
 
 class Linker(wiring.Component):
@@ -101,10 +104,17 @@ class Linker(wiring.Component):
         swap_a_target_req(m, self, self.a, self.b)
       with m.State(SWAP_A_TARGET_WAIT):
         swap_a_target_wait(m, self)
+      ##
+      with m.State(PUSH_ACTIVE_REQ):
+        push_active_req(m, self, self.a, self.b)
+      with m.State(PUSH_ACTIVE_WAIT):
+        push_active_wait(m, self)
 
     return m
 
 def idle(m: Module, linker: Linker):
+  m.d.comb += linker.granted.eq(True)
+
   with m.If(linker.req_link):
     m.d.sync += [
       linker.a.eq(linker.req_a),
@@ -164,14 +174,7 @@ def do_link(m: Module, linker: Linker, a, b):
       # fault if active worklist is full
       m.d.comb += linker.fault.active_full.eq(True)
     with m.Else():
-      pair = Signal(Port2)
-      m.d.comb += [
-        pair.a.eq(a),
-        pair.b.eq(b),
-      ]
-      StackPort.push(m, linker.active, pair)
-      m.d.sync += linker.done.eq(True)
-      m.next = IDLE
+      push_active_req(m, linker, a, b)
 
 #   with m.Elif(
 #     ((a.tag == Tag.COMB & b.tag == Tag.COMB) & a.label == b.label)
@@ -292,3 +295,26 @@ def swap_a_target_wait(m: Module, linker: Linker):
       # cause we need to set `a = previous`
       m.d.sync += linker.previous.eq(previous)
       free_a_continue_req(m, linker)
+
+
+def push_active_req(m: Module, linker: Linker, a, b):
+  with m.If(linker.active.full):
+    # fault if active worklist is full
+    m.d.comb += linker.fault.active_full.eq(True)
+    m.next = IDLE
+  with m.Else():
+    pair = Signal(Port2)
+    m.d.comb += [
+      pair.a.eq(a),
+      pair.b.eq(b),
+    ]
+    StackPort.push(m, linker.active, pair)
+    with m.If(linker.active.granted):
+      m.next = PUSH_ACTIVE_WAIT
+    with m.Else():
+      m.next = PUSH_ACTIVE_REQ
+
+def push_active_wait(m: Module, linker: Linker):
+  with m.If(linker.active.done):
+    m.d.sync += linker.done.eq(True)
+    m.next = IDLE
