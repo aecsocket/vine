@@ -30,6 +30,8 @@ class InteractorPort(wiring.Signature):
 IDLE = "idle"
 ANNIHILATE = "annihilate"
 COPY = "copy"
+COMMUTE_ALLOC_REQ = "commute_alloc_req"
+COMMUTE_ALLOC_WAIT = "commute_alloc_wait"
 
 LINKERS = 4
 
@@ -46,6 +48,8 @@ class Interactor(wiring.Component):
     self.linkers = [Linker() for _ in range(LINKERS)]
     self.linker_granted = [Signal(1) for _ in range(LINKERS)]
     self.linker_done = [Signal(1) for _ in range(LINKERS)]
+    self.commute_allocs = [Signal(Port) for _ in range(8)]
+    self.commute_alloc_idx = Signal(range(8))
 
     super().__init__()
     flatten(self, self.control)
@@ -54,8 +58,8 @@ class Interactor(wiring.Component):
     m = Module()
     m.d.sync += self.done.eq(False)
 
-    heap_arb = m.submodules.heap_arb = HeapArbiter(LINKERS)
-    alloc_arb = m.submodules.alloc_arb = AllocArbiter(LINKERS)
+    heap_arb = m.submodules.heap_arb = HeapArbiter(LINKERS + 1)
+    alloc_arb = m.submodules.alloc_arb = AllocArbiter(LINKERS + 1)
     active_arb = m.submodules.active_arb = StackArbiter(LINKERS, Port2)
     wiring.connect(m, heap_arb.real, wiring.flipped(self.heap))
     wiring.connect(m, alloc_arb.real, wiring.flipped(self.alloc))
@@ -66,6 +70,15 @@ class Interactor(wiring.Component):
       wiring.connect(m, alloc_arb.clients[i], linker.alloc)
       wiring.connect(m, active_arb.clients[i], linker.active)
 
+    # all heap/alloc access is arb'd thru `heap_arb`/`alloc_arb`,
+    # but some of our own interactor code (eg in commutation)
+    # needs to access the heap or allocator.
+    # so we need an extra client - ourselves.
+    own_heap = self.own_heap = HeapPort().create()
+    wiring.connect(m, heap_arb.clients[LINKERS], own_heap)
+    own_alloc = self.own_alloc = AllocPort().create()
+    wiring.connect(m, alloc_arb.clients[LINKERS], own_alloc)
+
     with m.FSM(init=IDLE):
       with m.State(IDLE):
         idle(m, self)
@@ -73,6 +86,10 @@ class Interactor(wiring.Component):
         annihilate(m, self, self.a, self.b, False)
       with m.State(COPY):
         copy(m, self, self.a, self.b, False)
+      with m.State(COMMUTE_ALLOC_REQ):
+        commute_alloc_req(m, self)
+      with m.State(COMMUTE_ALLOC_WAIT):
+        commute_alloc_wait(m, self)
 
     with m.If(self.stat_reset):
       m.d.sync += [
@@ -116,8 +133,11 @@ def do_interact(interact: Interactor, m: Module, a, b):
   ):
     # (Comb|ExtFn) >-< (Comb|ExtFn); if two Combs,
     # they must not have the same label; so we commute
-    # AllocPort.alloc(m, interact.alloc, 4)
-    m.next = IDLE # TODO
+    m.d.sync += [
+      self.commute_allocs[i].eq()
+      for i in range(8)
+    ]
+    commute_alloc_req(m, interact)
 
   with m.Elif(a.tag == Tag.ERASE):
     # Erase >-< B (B1, B2)
@@ -190,14 +210,53 @@ def copy(m: Module, interactor: Interactor, a, b, first_cycle: bool):
   with m.Else():
     m.next = COPY
 
-# def commute_alloc(interact: Interact, m: Module):
-#   AllocPort.alloc(m, interact.alloc, 4)
-#   with m.If(interact.alloc.done):
-#     with m.If(interact.alloc.oom):
-#       # TODO some kind of OOM fault handling?
-#       m.d.sync += interact.done.eq(True)
-#       m.next = IDLE
-#     with m.Else():
-#       m.d.sync += interact.alloc_addrs.eq(interact.alloc.alloc_addrs)
-#       LinkerPort.link(m, interact.linker, )
-#       m.next = COMMUTE_LINK_1
+def commute_alloc_req(m: Module, interactor: Interactor):
+  AllocPort.alloc(m, interactor.own_alloc, 8)
+  with m.If(interactor.alloc.granted):
+    m.next = COMMUTE_ALLOC_WAIT
+  with m.Else():
+    m.next = COMMUTE_ALLOC_REQ
+
+def commute_alloc_wait(m: Module, interactor: Interactor):
+  with m.If(interactor.own_alloc.oom):
+    # TODO some kind of OOM fault handling?
+    m.d.sync += interactor.done.eq(True)
+    m.next = IDLE
+  with m.Elif(interactor.own_alloc.done):
+    # nodes allocated; wire the first 4 together
+    a_1 = Signal(Port)
+    m.d.comb += a_1.eq({
+      "tag": interactor.a.tag,
+      "payload": interactor.own_alloc.alloc_addrs[0],
+      "label": interactor.a.label,
+    })
+    a_2 = Signal(Port)
+    m.d.comb += a_2.eq({
+      "tag": interactor.a.tag,
+      "payload": interactor.own_alloc.alloc_addrs[1],
+      "label": interactor.a.label,
+    })
+
+    b_1 = Signal(Port)
+    m.d.comb += b_1.eq({
+      "tag": interactor.b.tag,
+      "payload": interactor.own_alloc.alloc_addrs[2],
+      "label": interactor.b.label,
+    })
+    b_2 = Signal(Port)
+    m.d.comb += b_2.eq({
+      "tag": interactor.b.tag,
+      "payload": interactor.own_alloc.alloc_addrs[3],
+      "label": interactor.b.label,
+    })
+
+def commute_link_fresh_req(m: Module, interactor: Interactor):
+  HeapPort.write(m, interactor.own_heap, interactor.commute_allocs[interactor.commute_alloc_idx], Port.invalid())
+  with m.If(interactor.own_heap.granted):
+    m.next = COMMUTE_LINK_FRESH_WAIT
+  with m.Else():
+    m.next = COMMUTE_LINK_FRESH_REQ
+
+def commute_link_fresh_wait(m: Module, interactor: Interactor):
+  with m.If(interactor.own_heap.done):
+    pass

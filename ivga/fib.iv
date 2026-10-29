@@ -1,0 +1,37 @@
+// Compute fib(32) and leave ivm:n32#2178309 at the root.
+// This is a value-producing entrypoint, not the CLI's IO-returning main.
+// To run: instantiate iv:main with its root connected to a result wire, then normalize.
+// Change ivm:n32#32 below to choose n (u32 arithmetic).
+
+iv:main {
+  ^ = result
+  ivm:graft[:fib] = ivm:x(ivm:n32#32 ivm:x(ivm:n32#0 ivm:x(ivm:n32#1 result)))
+}
+
+// State: (n, a, b, result). Return a when n == 0; otherwise take a step.
+:fib {
+  ^ = ivm:x(ivm:y(n_test n_step) ivm:x(a ivm:x(b result)))
+  n_test = ivm:ext:merge[vi:n32:ne](
+    ivm:n32#0
+    ivm:ext:merge[ivm:branch](
+      ivm:branch[:fib::done, :fib::step]
+      ivm:x(n_step ivm:x(a ivm:x(b result)))
+    )
+  )
+}
+
+:fib::done {
+  ^ = ivm:x(ivm:eraser ivm:x(result ivm:x(ivm:eraser result)))
+}
+
+// (n, a, b) -> (n - 1, b, a + b).
+:fib::step {
+  ^ = ivm:x(
+    ivm:ext:merge[vi:n32:sub](ivm:n32#1 n_next)
+    ivm:x(
+      ivm:ext:merge[vi:n32:add](b_add sum)
+      ivm:x(ivm:y(b_next b_add) result)
+    )
+  )
+  ivm:graft[:fib] = ivm:x(n_next ivm:x(b_next ivm:x(sum result)))
+}
