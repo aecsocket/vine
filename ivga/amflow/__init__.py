@@ -39,7 +39,7 @@ class Operation[T](ABC):
     """
     ...
 
-def elaborate_flow(
+def expand(
   m: Module,
   gen: Generator[
     Operation[object],
@@ -58,9 +58,9 @@ def elaborate_flow(
     operations.append(operation)
     result = operation.result
 
-  elaborate_flow_operations(m, operations)
+  expand_ops(m, operations)
 
-def elaborate_flow_operations(
+def expand_ops(
   m: Module,
   operations: list[Operation[object]],
 ) -> None:
@@ -85,7 +85,7 @@ def elaborate_flow_operations(
           m.next = next_state_name
 
 
-class ReadMemory(Operation[Value]):
+class MemoryRead(Operation[Value]):
   def __init__(self, name: str, read: ReadPort, addr: ValueLike):
     self.read = read
     self.addr = Value.cast(addr)
@@ -119,7 +119,7 @@ class ReadMemory(Operation[Value]):
     return Const(True)
 
 
-class WriteMemory(Operation[None]):
+class MemoryWrite(Operation[None]):
   def __init__(self, name: str, write: WritePort, addr: ValueLike, data: ValueLike):
     self.write = write
     self.addr = Value.cast(addr)

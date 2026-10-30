@@ -4,7 +4,7 @@ from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
 from amaranth.sim import Simulator
 
-from amflow import ReadMemory, Sync, WriteMemory, elaborate_flow
+from amflow import MemoryRead, MemoryWrite, Sync, expand
 
 
 class Dummy(wiring.Component):
@@ -26,17 +26,17 @@ class Dummy(wiring.Component):
     m.submodules.memory = self.memory
 
     with m.If(~self.done):
-      elaborate_flow(m, do_something(self))
+      expand(m, do_something(self))
 
     return m
 
 def do_something(dummy: Dummy):
-  yield WriteMemory("init_6", dummy.memory_write, addr=6, data=0x42)
-  yield WriteMemory("init_7", dummy.memory_write, addr=7, data=0x99)
+  yield MemoryWrite("init_6", dummy.memory_write, addr=6, data=0x42)
+  yield MemoryWrite("init_7", dummy.memory_write, addr=7, data=0x99)
 
-  a = yield ReadMemory("read_6", dummy.memory_read, addr=6)
-  b = yield ReadMemory("read_7", dummy.memory_read, addr=7)
-  yield WriteMemory("write_8", dummy.memory_write, addr=8, data=a + b)
+  a = yield MemoryRead("read_6", dummy.memory_read, addr=6)
+  b = yield MemoryRead("read_7", dummy.memory_read, addr=7)
+  yield MemoryWrite("write_8", dummy.memory_write, addr=8, data=a + b)
   yield Sync("set_done", dummy.done.eq(True))
 
 async def dummy_testbench(ctx):
