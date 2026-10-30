@@ -24,6 +24,11 @@ class Operation[T](ABC):
     """Response signal from this operation."""
     return self._result
 
+  def prepare(self, m: Module) -> None:
+    """Emit elaboration instructions for this operation, which are not gated by
+    the operation currently running.
+    """
+
   @abstractmethod
   def emit(self, m: Module) -> Value:
     """Emit elaboration instructions for when this operation is running.
@@ -65,6 +70,9 @@ def elaborate_flow_operations(
   first = operations[0]
   first_state_name = f"0_{first.name}"
 
+  for operation in operations:
+    operation.prepare(m)
+
   with m.FSM(init=first_state_name):
     for i, operation in enumerate(operations):
       next_operation = operations[i + 1] if i + 1 < len(operations) else None
@@ -78,14 +86,33 @@ def elaborate_flow_operations(
 
 
 class ReadMemory(Operation[Value]):
-  def __init__(self, name: str, port: ReadPort, addr: ValueLike):
-    super().__init__(name, Value.cast(port.data))
-    self.read = port
+  def __init__(self, name: str, read: ReadPort, addr: ValueLike):
+    self.read = read
     self.addr = Value.cast(addr)
+
+    # when we're in this operation's state, we prefer `read.data`;
+    # else, we use the value saved from the last `read.data`
+    self.issued = Signal()
+    self.just_read = Signal()
+    self.saved = Signal(read.signature.shape)
+    result = Signal(read.signature.shape)
+    super().__init__(name, result)
+
+  @override
+  def prepare(self, m: Module) -> None:
+    m.d.sync += self.just_read.eq(self.issued)
+    with m.If(self.just_read):
+      m.d.sync += self.saved.eq(self.read.data)
+
+    # `saved` is 1 cycle behind `read.data`;
+    # so if we've just read the data, then expose the most recent read data
+    latest = Mux(self.just_read, self.read.data, self.saved)
+    m.d.comb += self.result.eq(latest)
 
   @override
   def emit(self, m: Module) -> Value:
     m.d.comb += [
+      self.issued.eq(True),
       self.read.en.eq(True),
       self.read.addr.eq(self.addr),
     ]
@@ -93,11 +120,11 @@ class ReadMemory(Operation[Value]):
 
 
 class WriteMemory(Operation[None]):
-  def __init__(self, name: str, port: WritePort, addr: ValueLike, data: ValueLike):
-    super().__init__(name, None)
-    self.write = port
+  def __init__(self, name: str, write: WritePort, addr: ValueLike, data: ValueLike):
+    self.write = write
     self.addr = Value.cast(addr)
     self.data = Value.cast(data)
+    super().__init__(name, None)
 
   @override
   def emit(self, m: Module) -> Value:

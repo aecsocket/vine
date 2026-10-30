@@ -31,12 +31,11 @@ class Dummy(wiring.Component):
 
 def do_something(dummy: Dummy):
   yield WriteMemory("init_6", dummy.memory_write, addr=6, data=0x42)
-  yield WriteMemory("init_7", dummy.memory_write, addr=6, data=0x99)
+  yield WriteMemory("init_7", dummy.memory_write, addr=7, data=0x99)
 
   a = yield ReadMemory("read_6", dummy.memory_read, addr=6)
   b = yield ReadMemory("read_7", dummy.memory_read, addr=7)
-  c = a + b
-  yield WriteMemory("write_8", dummy.memory_write, addr=8, data=c)
+  yield WriteMemory("write_8", dummy.memory_write, addr=8, data=a + b)
 
 async def dummy_testbench(ctx):
   await ctx.tick().repeat(10)
