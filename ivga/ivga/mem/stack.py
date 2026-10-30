@@ -1,7 +1,10 @@
+from typing import override
+
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.memory import Memory, ReadPort, WritePort
 from amaranth.lib.wiring import In, Out
+from amflow import Operation, ValueLike
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import flatten
@@ -25,7 +28,6 @@ class StackPort(wiring.Signature):
     super().__init__({
       "req_push": Out(1),
       "push_data": Out(shape),
-
       "req_pop": Out(1),
       "pop_data": In(shape),
 
@@ -35,16 +37,6 @@ class StackPort(wiring.Signature):
       "full": In(1),
     })
 
-  @staticmethod
-  def push(m: Module, stack, data):
-    m.d.comb += [
-      stack.req_push.eq(True),
-      stack.push_data.eq(data),
-    ]
-
-  @staticmethod
-  def pop(m: Module, stack):
-    m.d.comb += stack.req_pop.eq(True)
 
 class Stack(wiring.Component):
   def __init__(self, shape, depth: int):
@@ -61,8 +53,7 @@ class Stack(wiring.Component):
 
   def elaborate(self, platform):
     m = Module()
-
-    m.submodules.memory = memory = Memory(
+    memory = m.submodules.memory = Memory(
       shape=self.shape,
       depth=self.depth,
       init=[]
@@ -97,7 +88,7 @@ class Stack(wiring.Component):
 
     return m
 
-def push(stack: Stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
+def push(stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
   with m.If(stack.full):
     m.d.sync += stack.done.eq(True)
   with m.Else():
@@ -107,7 +98,7 @@ def push(stack: Stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
       stack.done.eq(True),
     ]
 
-def pop(stack: Stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
+def pop(stack, m: Module, mem_read: ReadPort, mem_write: WritePort):
   with m.If(stack.empty):
     m.d.sync += stack.done.eq(True)
   with m.Else():
@@ -125,3 +116,47 @@ StackArbiter = make_arbiter_type(
   lambda client: client.req_push | client.req_pop,
   always_out=("empty", "full"),
 )
+
+
+
+class StackPush(Operation[None]):
+  def __init__(self, name: str, stack, data: ValueLike):
+    self.stack = stack
+    self.data = data
+    super().__init__(name, None)
+
+  @override
+  def emit(self, m: Module) -> Value:
+    can_push = ~self.stack.full
+    m.d.comb += [
+      self.stack.req_push.eq(can_push),
+      self.stack.push_data.eq(self.data),
+    ]
+    return can_push & self.stack.granted
+
+
+class StackPop(Operation[Value]):
+  def __init__(self, name: str, stack):
+    self.stack = stack
+    shape = Shape.cast(stack.pop_data.shape())
+    self.issued = Signal()
+    self.just_popped = Signal()
+    self.saved = Signal(shape)
+    super().__init__(name, Signal(shape))
+
+  @override
+  def prepare(self, m: Module) -> None:
+    m.d.sync += self.just_popped.eq(self.issued)
+    with m.If(self.just_popped):
+      m.d.sync += self.saved.eq(self.stack.pop_data)
+    latest = Mux(self.just_popped, self.stack.pop_data, self.saved)
+    m.d.comb += self.result.eq(latest)
+
+  @override
+  def emit(self, m: Module) -> Value:
+    can_pop = ~self.stack.empty
+    m.d.comb += [
+      self.stack.req_pop.eq(can_pop),
+      self.issued.eq(can_pop & self.stack.granted),
+    ]
+    return self.issued
