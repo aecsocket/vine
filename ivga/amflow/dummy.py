@@ -4,12 +4,12 @@ from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
 from amaranth.sim import Simulator
 
-from amflow import ReadMemory, WriteMemory, elaborate_flow
+from amflow import ReadMemory, Sync, WriteMemory, elaborate_flow
 
 
 class Dummy(wiring.Component):
   smth_external: In(1)
-  go_out: Out(1)
+  done: Out(1)
 
   def __init__(self):
     self.memory = Memory(
@@ -23,9 +23,10 @@ class Dummy(wiring.Component):
 
   def elaborate(self, platform):
     m = Module()
-
     m.submodules.memory = self.memory
-    elaborate_flow(m, do_something(self))
+
+    with m.If(~self.done):
+      elaborate_flow(m, do_something(self))
 
     return m
 
@@ -36,6 +37,7 @@ def do_something(dummy: Dummy):
   a = yield ReadMemory("read_6", dummy.memory_read, addr=6)
   b = yield ReadMemory("read_7", dummy.memory_read, addr=7)
   yield WriteMemory("write_8", dummy.memory_write, addr=8, data=a + b)
+  yield Sync("set_done", dummy.done.eq(True))
 
 async def dummy_testbench(ctx):
   await ctx.tick().repeat(10)

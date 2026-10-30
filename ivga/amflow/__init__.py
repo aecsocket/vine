@@ -134,3 +134,40 @@ class WriteMemory(Operation[None]):
       self.write.data.eq(self.data),
     ]
     return Const(True)
+
+
+class Step(Operation[None]):
+  def __init__(self, name: str, *, comb, sync, until):
+    self.comb = comb
+    self.sync = sync
+    self.until = until
+    super().__init__(name, None)
+
+  @override
+  def emit(self, m: Module) -> Value:
+    m.d.comb += self.comb
+    with m.If(self.until):
+      m.d.sync += self.sync
+    return self.until
+
+
+class Comb(Operation[None]):
+  def __init__(self, name: str, assigns):
+    self.assigns = assigns if isinstance(assigns, list) else [assigns]
+    super().__init__(name, None)
+
+  @override
+  def emit(self, m: Module) -> Value:
+    m.d.comb += self.assigns
+    return Const(True)
+
+
+class Sync(Operation[None]):
+  def __init__(self, name: str, assigns):
+    self.assigns = assigns if isinstance(assigns, list) else [assigns]
+    super().__init__(name, None)
+
+  @override
+  def emit(self, m: Module) -> Value:
+    m.d.sync += self.assigns
+    return Const(True)
