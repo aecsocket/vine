@@ -1,173 +1,117 @@
-from abc import ABC, abstractmethod
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Iterable
 from enum import Enum
-from typing import Any, override
+from typing import Any
 
 from amaranth import *
 from amaranth import ValueCastable
-from amaranth.lib.memory import ReadPort, WritePort
+from amaranth.hdl._ast import Statement
+
+__all__ = [
+  "Flow",
+  "ValueLike",
+  "expand",
+]
 
 type ValueLike = Value | ValueCastable | Enum | int
 
-class Operation[T](ABC):
-  def __init__(self, name: str, result: T):
-    self._name = name
-    self._result = result
+class Flow:
+  def __init__(self, m: Module):
+    self.m = m
+    self.comb: list[Statement] = []
+    self.sync: list[Statement] = []
 
-  @property
-  def name(self) -> str:
-    """Name of this stage, like `write_free_addr` or `bump_value`."""
-    return self._name
+  def accumulate(
+    self,
+    *,
+    comb: Statement | Iterable[Statement] = (),
+    sync: Statement | Iterable[Statement] = (),
+  ):
+    self.comb.extend([comb] if isinstance(comb, Statement) else comb)
+    self.sync.extend([sync] if isinstance(sync, Statement) else sync)
 
-  @property
-  def result(self) -> T:
-    """Response signal from this operation."""
-    return self._result
+  def If(self, cond: Value):
+    pass
 
-  def prepare(self, m: Module) -> None:
-    """Emit elaboration instructions for this operation, which are not gated by
-    the operation currently running.
-    """
+  def Else(self):
+    pass
 
-  @abstractmethod
-  def emit(self, m: Module) -> Value:
-    """Emit elaboration instructions for when this operation is running.
+  def Elif(self, cond: Value):
+    pass
 
-    Returns:
-      Value expressing whether this operation has completed by the next clock
-      edge.
-    """
-    ...
+class Step:
+  def __init__(self, *, until: Value, out: Value | None):
+    self.until = until
+    self.out = out
+
+def step(
+  f: Flow,
+  *,
+  comb: Statement | Iterable[Statement] = (),
+  sync: Statement | Iterable[Statement] = (),
+  until: Value | None = None,
+  out: Value | None = None,
+) -> Step:
+  f.accumulate(comb=comb, sync=sync)
+  return Step(
+    until=Const(True) if until is None else until,
+    out=out,
+  )
+
+def sync(f: Flow, assigns: Statement | Iterable[Statement]) -> Step:
+  return step(f, sync=assigns)
+
+def comb(f: Flow, assigns: Statement | Iterable[Statement]) -> Step:
+  return step(f, comb=assigns)
+
+def tick(f: Flow) -> Step:
+  return step(f)
 
 def expand(
   m: Module,
-  gen: Generator[
-    Operation[object],
-    Any, # pyright: ignore[reportExplicitAny]
-    None,
+  make_gen: Callable[
+    [Flow],
+    Generator[
+      Step,
+      Any, # pyright: ignore[reportExplicitAny]
+      None,
+    ]
   ],
-) -> None:
-  operations = []
+):
+  class State:
+    def __init__(self, flow: Flow, step: Step):
+      self.comb = flow.comb.copy()
+      self.sync = flow.sync.copy()
+      self.until = step.until
+
+  flow = Flow(m)
+  gen = make_gen(flow)
   result = None
+  states = []
 
   while True:
     try:
-      operation = gen.send(result)
+      step = gen.send(result)
+      states.append(State(flow, step))
+      result = step.out
+
+      flow.comb.clear()
+      flow.sync.clear()
     except StopIteration:
+      if flow.comb:
+        raise ValueError("Uncommitted `comb` effects; did you forget to `yield`?")
+      if flow.sync:
+        raise ValueError("Uncommitted `sync` effects; did you forget to `yield`?")
+
       break
-    operations.append(operation)
-    result = operation.result
 
-  expand_ops(m, operations)
-
-def expand_ops(
-  m: Module,
-  operations: list[Operation[object]],
-) -> None:
-  if not operations:
+  if not states:
     # nothing to elaborate
     return
-  first = operations[0]
-  first_state_name = f"0_{first.name}"
 
-  for operation in operations:
-    operation.prepare(m)
-
-  with m.FSM(init=first_state_name):
-    for i, operation in enumerate(operations):
-      next_operation = operations[i + 1] if i + 1 < len(operations) else None
-      state_name = f"{i}_{operation.name}"
-      next_state_name = f"{i+1}_{next_operation.name}" if next_operation else first_state_name
-
-      with m.State(state_name):
-        cond = operation.emit(m)
-        with m.If(cond):
-          m.next = next_state_name
-
-
-class MemoryRead(Operation[Value]):
-  def __init__(self, name: str, read: ReadPort, addr: ValueLike):
-    self.read = read
-    self.addr = Value.cast(addr)
-
-    # when we're in this operation's state, we prefer `read.data`;
-    # else, we use the value saved from the last `read.data`
-    self.issued = Signal()
-    self.just_read = Signal()
-    self.saved = Signal(read.signature.shape)
-    result = Signal(read.signature.shape)
-    super().__init__(name, result)
-
-  @override
-  def prepare(self, m: Module) -> None:
-    m.d.sync += self.just_read.eq(self.issued)
-    with m.If(self.just_read):
-      m.d.sync += self.saved.eq(self.read.data)
-
-    # `saved` is 1 cycle behind `read.data`;
-    # so if we've just read the data, then expose the most recent read data
-    latest = Mux(self.just_read, self.read.data, self.saved)
-    m.d.comb += self.result.eq(latest)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.comb += [
-      self.issued.eq(True),
-      self.read.en.eq(True),
-      self.read.addr.eq(self.addr),
-    ]
-    return Const(True)
-
-
-class MemoryWrite(Operation[None]):
-  def __init__(self, name: str, write: WritePort, addr: ValueLike, data: ValueLike):
-    self.write = write
-    self.addr = Value.cast(addr)
-    self.data = Value.cast(data)
-    super().__init__(name, None)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.comb += [
-      self.write.en.eq(True),
-      self.write.addr.eq(self.addr),
-      self.write.data.eq(self.data),
-    ]
-    return Const(True)
-
-
-class Step(Operation[None]):
-  def __init__(self, name: str, *, comb, sync, until):
-    self.comb = comb
-    self.sync = sync
-    self.until = until
-    super().__init__(name, None)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.comb += self.comb
-    with m.If(self.until):
-      m.d.sync += self.sync
-    return self.until
-
-
-class Comb(Operation[None]):
-  def __init__(self, name: str, assigns):
-    self.assigns = assigns if isinstance(assigns, list) else [assigns]
-    super().__init__(name, None)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.comb += self.assigns
-    return Const(True)
-
-
-class Sync(Operation[None]):
-  def __init__(self, name: str, assigns):
-    self.assigns = assigns if isinstance(assigns, list) else [assigns]
-    super().__init__(name, None)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.sync += self.assigns
-    return Const(True)
+  with m.FSM(init=str(0)):
+    for i, state in enumerate(states):
+      with m.State(str(i)):
+        m.d.comb += state.comb
+        with m.If(state.until):
+          m.d.sync += state.sync
+          m.next = str((i + 1) % len(states))
