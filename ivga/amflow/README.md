@@ -35,22 +35,21 @@ done: Out(1)
 m = Module()
 m.d.sync += done.eq(False)
 
-amflow.expand(m, program)
-
 def program(f: amflow.Flow):
   with f.If(count_down_from > 0):
     counter = f.capture(count_down_from)
     
-    with f.While(count_down_from > 0):
-      yield sync(f, counter.reg.eq(counter.value - 1))
+    with f.While(counter > 0):
+      yield sync(f, counter.eq(counter - 1))
 
     yield sync(f, done.eq(True))
 
 # `amflow.expand` expands to the same
 # state machine that we've written above
+amflow.expand(m, program)
 ```
 
-The general idea is that, instead of writing an `m.FSM()` and using `m.State()`, you can write a generator function taking a `f: amflow.Flow` which `yield`s steps for the hardware to run. Each `yield` marks a transition from one FSM state to another, and you can combine states with control flow like if/else/while to form more complicated programs.
+The general idea is that, instead of writing an `m.FSM()` and using `m.State()`, you can write a generator function taking a `f: amflow.Flow` which `yield`s steps for the hardware to run. Each `yield` marks a place where a clock cycle happens, and where an FSM transition may happen. You can combine states with control flow like if/else/while to form more complicated programs.
 
 ```python
 def program(f: Flow):
@@ -60,9 +59,9 @@ def program(f: Flow):
   ]
   
   with f.If(some_value > 0):
-    yield sync(some_other_value.eq(True))
+    yield sync(f, some_other_value.eq(True))
   with f.Else():
-    yield sync(another_third_value.eq(True))
+    yield sync(f, another_third_value.eq(True))
 ```
 
 This can be used to "await" in hardware, like awaiting a memory read to chain it with a memory write:
@@ -89,14 +88,33 @@ def program(
   read_b: amaranth.lib.memory.ReadPort,
   write: amaranth.lib.memory.WritePort
 ):
-  # these two ops get done in the same cycle
-  a = memory_read(f, read_a, addr=0).out
+  # these two ops get done in the same
+  # state transition (and, here, clock cycle)
+  a = memory_read(f, read_a, addr=0)
   b = yield memory_read(f, read_b, addr=0)
 
   # ...and their results are available 1 cycle later.
   # write into a third disjoint memory module
   c = a + b
   yield memory_write(f, write, addr=0, data=c)
+```
+
+Keep in mind that all of this exists _on top of_ Amaranth, so you get all the benefits of the Amaranth ecosystem, and can freely mix `amflow.expand` and regular `Module` elaboration functions.
+
+```python
+class MyModule(wiring.Component):
+  def elaborate(self, platform):
+    m = Module()
+  
+    with m.If(self.do_one_thing):
+      expand(m, lambda f: program(f, self))
+    with m.Else():
+      m.d.sync += self.output.eq(True)
+
+    return m
+
+def program(f: Flow, my_module: MyModule):
+  yield tick(f)
 ```
 
 [coroutines]: https://en.wikipedia.org/wiki/Coroutine

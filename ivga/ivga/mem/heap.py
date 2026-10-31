@@ -2,7 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
-from amflow import Flow, Step, ValueLike, step
+from amflow import Flow, ValueLike, step
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import Addr, Word, flatten
@@ -79,59 +79,39 @@ HeapArbiter = make_arbiter_type(
   lambda client: client.read | client.write,
 )
 
-def heap_read(f: Flow, heap, *, addr: ValueLike) -> Step:
-  issued = Signal()
-  just_read = Signal()
-  saved = Signal.like(heap.read_data)
-
-  m = f.m
-  m.d.sync += just_read.eq(issued)
-  with m.If(just_read):
-    m.d.sync += saved.eq(heap.read_data)
-  latest = Mux(just_read, heap.read_data, saved)
-
-  return step(
+def heap_read(f: Flow, heap, *, addr: ValueLike) -> ValueLike:
+  result = f.capture(heap.read_data, after_step=True)
+  step(
     f,
     comb=[
       heap.read.eq(True),
       heap.addr.eq(addr),
-      issued.eq(heap.granted),
     ],
-    until=heap.granted,
-    out=latest,
+    until=heap.granted
   )
+  return result
 
-def heap_write(f: Flow, heap, *, addr: ValueLike, data: ValueLike) -> Step:
-  return step(
+def heap_write(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> None:
+  step(
     f,
     comb=[
       heap.write.eq(True),
       heap.addr.eq(addr),
-      heap.write_data.eq(data),
+      heap.write_data.eq(write),
     ],
     until=heap.granted,
   )
 
-def heap_swap(f: Flow, heap, *, addr: ValueLike, write_data: ValueLike) -> Step:
-  issued = Signal()
-  just_read = Signal()
-  saved = Signal.like(heap.read_data)
-
-  m = f.m
-  m.d.sync += just_read.eq(issued)
-  with m.If(just_read):
-    m.d.sync += saved.eq(heap.read_data)
-  latest = Mux(just_read, heap.read_data, saved)
-
-  return step(
+def heap_swap(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> ValueLike:
+  result = f.capture(heap.read_data, after_step=True)
+  step(
     f,
     comb=[
       heap.read.eq(True),
       heap.write.eq(True),
       heap.addr.eq(addr),
-      heap.write_data.eq(write_data),
-      issued.eq(heap.granted),
+      heap.write_data.eq(write),
     ],
     until=heap.granted,
-    out=latest,
   )
+  return result
