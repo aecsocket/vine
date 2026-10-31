@@ -4,7 +4,7 @@ from typing import Any, Self
 
 from amaranth import *
 from amaranth import ValueCastable
-from amaranth.hdl._ast import Statement
+from amaranth.hdl._ast import Statement, Switch
 
 from amflow.capture import Capture, CaptureWrites
 
@@ -35,6 +35,7 @@ class Flow:
     if after_step:
       self.after_step.append(captured)
     else:
+      _flush_effects(self)
       self.block.items.append(captured)
     self.m.d.comb += captured.bypass.eq(False)
     return captured
@@ -106,11 +107,35 @@ class Assigns:
     sync: list[Statement],
     on_done: list[Statement],
     until: Value,
+    after_step: list[Capture] | None = None,
   ):
     self.comb = comb
     self.sync = sync
     self.on_done = on_done
     self.until = until
+    self.after_step = [] if after_step is None else after_step
+
+class Effects(Assigns):
+  """Assignments at a control-flow position, without a clock boundary."""
+
+
+def _take_effects(flow: Flow, kind: type[Assigns]) -> Assigns:
+  after_step, flow.after_step = flow.after_step, []
+  return kind(
+    flow.d.comb.take(), flow.d.sync.take(), flow.d.on_done.take(),
+    flow.d.until.take(), after_step,
+  )
+
+
+def _always(condition: Value) -> bool:
+  return isinstance(condition, Const) and bool(condition.value)
+
+
+def _flush_effects(flow: Flow) -> None:
+  effects = _take_effects(flow, Effects)
+  if effects.comb or effects.sync or effects.on_done or effects.after_step or not _always(effects.until):
+    flow.block.items.append(effects)
+
 
 class Branch:
   def __init__(self):
@@ -130,6 +155,7 @@ class FlowIf:
     self.cond = Value.cast(cond)
 
   def __enter__(self):
+    _flush_effects(self.flow)
     self.parent = self.flow.block
 
     # make a new branch
@@ -143,7 +169,11 @@ class FlowIf:
     return self
 
   def __exit__(self, exc_type, exc, traceback):
-    self.flow.block = self.parent
+    try:
+      if exc_type is None:
+        _flush_effects(self.flow)
+    finally:
+      self.flow.block = self.parent
     return False
 
 class FlowElif:
@@ -152,6 +182,7 @@ class FlowElif:
     self.cond = Value.cast(cond)
 
   def __enter__(self):
+    _flush_effects(self.flow)
     self.parent = self.flow.block
 
     # reuse the last existing branch
@@ -170,7 +201,11 @@ class FlowElif:
     return self
 
   def __exit__(self, exc_type, exc, traceback):
-    self.flow.block = self.parent
+    try:
+      if exc_type is None:
+        _flush_effects(self.flow)
+    finally:
+      self.flow.block = self.parent
     return False
 
 class FlowElse:
@@ -178,6 +213,7 @@ class FlowElse:
     self.flow = flow
 
   def __enter__(self):
+    _flush_effects(self.flow)
     self.parent = self.flow.block
 
     # reuse the last existing branch
@@ -196,7 +232,11 @@ class FlowElse:
     return self
 
   def __exit__(self, exc_type, exc, traceback):
-    self.flow.block = self.parent
+    try:
+      if exc_type is None:
+        _flush_effects(self.flow)
+    finally:
+      self.flow.block = self.parent
     return False
 
 class FlowWhile:
@@ -205,6 +245,7 @@ class FlowWhile:
     self.cond = Value.cast(cond)
 
   def __enter__(self):
+    _flush_effects(self.flow)
     self.parent = self.flow.block
     self.loop = Loop(self.cond)
     self.parent.items.append(self.loop)
@@ -214,7 +255,11 @@ class FlowWhile:
     return self
 
   def __exit__(self, exc_type, exc, traceback):
-    self.flow.block = self.parent
+    try:
+      if exc_type is None:
+        _flush_effects(self.flow)
+    finally:
+      self.flow.block = self.parent
     return False
 
 
@@ -236,14 +281,7 @@ def expand(
   result = None
 
   def _finish_step() -> None:
-    flow.block.items.append(Assigns(
-      flow.d.comb.take(),
-      flow.d.sync.take(),
-      flow.d.on_done.take(),
-      flow.d.until.take(),
-    ))
-    after_step, flow.after_step = flow.after_step, []
-    flow.block.items.extend(after_step)
+    flow.block.items.append(_take_effects(flow, Assigns))
 
   while True:
     try:
@@ -265,6 +303,68 @@ def expand(
 
   writes = CaptureWrites(flow.captures)
 
+  def emit_statements(domain: str, statements: Iterable[Statement]) -> None:
+    for stmt in writes.on_statements(statements):
+      if isinstance(stmt, Switch):
+        with m.Switch(stmt.test):
+          for patterns, body, _ in stmt.cases:
+            with m.Default() if patterns is None else m.Case(*patterns):
+              emit_statements(domain, body)
+      else:
+        m.d[domain] += stmt
+
+  def merge(groups: Iterable[Assigns]) -> Assigns:
+    result = Assigns([], [], [], Const(True))
+    for group in groups:
+      result.comb.extend(group.comb)
+      result.sync.extend(group.sync)
+      result.on_done.extend(group.on_done)
+      result.after_step.extend(group.after_step)
+      if _always(result.until):
+        result.until = group.until
+      elif not _always(group.until):
+        result.until = result.until.bool() & group.until.bool()
+    return result
+
+  def block_effects(block: Block) -> Assigns | None:
+    groups = []
+    for item in block.items:
+      if isinstance(item, Effects) and not item.after_step:
+        groups.append(item)
+      elif isinstance(item, Branch):
+        group = branch_effects(item)
+        if group is None:
+          return None
+        groups.append(group)
+      else:
+        return None
+    return merge(groups)
+
+  def branch_effects(branch: Branch) -> Effects | None:
+    result = block_effects(branch.or_else) if branch.or_else is not None else merge(())
+    if result is None:
+      return None
+    for cond, body in reversed(branch.arms):
+      arm = block_effects(body)
+      if arm is None:
+        return None
+
+      def select(
+        yes: list[Statement], no: list[Statement], condition: Value = cond,
+      ) -> list[Statement]:
+        if not yes and not no:
+          return []
+        return [Switch(condition.bool(), [((1,), yes, None), (None, no, None)])]
+
+      until = Const(True) if _always(arm.until) and _always(result.until) else Mux(
+        cond, arm.until.bool(), result.until.bool(),
+      )
+      result = Effects(
+        select(arm.comb, result.comb), select(arm.sync, result.sync),
+        select(arm.on_done, result.on_done), until,
+      )
+    return Effects(result.comb, result.sync, result.on_done, result.until)
+
   class Action:
     def __init__(self, assigns: Assigns, following: Target):
       self.assigns = assigns
@@ -284,13 +384,20 @@ def expand(
       self.captured = captured
       self.following = following
 
+  class Effecting:
+    def __init__(self, effects: Assigns, following: Target):
+      self.effects = effects
+      self.following = following
+
   # None is the end of the program, which loops back to its entry.
-  type Target = Action | Decision | Capturing | None
+  type Target = Action | Decision | Capturing | Effecting | None
 
   def lower(block: Block, after: Target) -> Target:
     entry = after
     for item in reversed(block.items):
-      if isinstance(item, Assigns):
+      if isinstance(item, Effects):
+        entry = Effecting(item, entry)
+      elif isinstance(item, Assigns):
         entry = Action(item, entry)
       elif isinstance(item, Capture):
         entry = Capturing(item, entry)
@@ -300,21 +407,26 @@ def expand(
         loop.arms.append((item.cond, lower(item.body, loop)))
         entry = loop
       else:
-        otherwise = lower(item.or_else, entry) if item.or_else is not None else entry
-        arms = [(cond, lower(body, entry)) for cond, body in item.arms]
-        # A branch whose arms all fall through has no work to dispatch.
-        if all(target is otherwise for _, target in arms):
-          entry = otherwise
+        effects = branch_effects(item)
+        if effects is not None:
+          # A branch with no clock boundaries is an ordinary within-step guard.
+          if effects.comb or effects.sync or effects.on_done or not _always(effects.until):
+            entry = Effecting(effects, entry)
         else:
-          entry = Decision(arms, otherwise)
+          otherwise = lower(item.or_else, entry) if item.or_else is not None else entry
+          arms = [(cond, lower(body, entry)) for cond, body in item.arms]
+          if all(target is otherwise for _, target in arms):
+            entry = otherwise
+          else:
+            entry = Decision(arms, otherwise)
     return entry
 
   entry = lower(flow.root, None)
   if entry is None:
     return
 
-  states: list[Action | Decision | Capturing] = []
-  names: dict[Action | Decision | Capturing, str] = {}
+  states: list[Action | Decision | Capturing | Effecting] = []
+  names: dict[Action | Decision | Capturing | Effecting, str] = {}
 
   def schedule(target: Target) -> str:
     if target is None:
@@ -325,49 +437,73 @@ def expand(
       states.append(target)
     return names[target]
 
-  def emit(target: Target, path: tuple[Decision | Capturing, ...] = ()) -> None:
+  def emit(
+    target: Target,
+    path: tuple[Decision | Capturing | Effecting, ...] = (),
+    pending: tuple[Assigns, ...] = (),
+    replay: tuple[Assigns, ...] = (),
+  ) -> None:
     if target is None:
       target = entry
     assert target is not None
 
-    if isinstance(target, (Decision, Capturing)):
+    if isinstance(target, (Decision, Capturing, Effecting)):
       if target in path:
-        # Close a path with no yielded action at the repeated control-flow node.
+        if any(group.after_step for group in pending):
+          raise ValueError("Uncommitted `after_step` captures; did you forget to `yield`?")
+        if any(group.on_done or not _always(group.until) for group in pending):
+          raise ValueError("A control-flow cycle with completion effects must reach a `yield`")
         m.next = schedule(target)
         return
       path = (*path, target)
+
+    if isinstance(target, Effecting):
+      effects = target.effects
+      emit_statements("comb", effects.comb)
+      emit_statements("sync", effects.sync)
+      emit(target.following, path, (*pending, effects), (*replay, effects))
+      return
 
     if isinstance(target, Capturing):
       captured = target.captured
       m.d.comb += captured.bypass.eq(True)
       m.d.sync += captured.reg.eq(captured.source)
-      # Capture at the first edge, even if the following action stalls.
-      emit(target.following, path)
+      emit(target.following, path, pending, replay)
       return
 
     if isinstance(target, Decision):
+      # Entry-state effects stay at the dispatch; pending handshakes keep running.
+      replay = tuple(group for group in replay if not _always(group.until))
       for i, (cond, arm) in enumerate(target.arms):
         with m.If(cond) if i == 0 else m.Elif(cond):
-          emit(arm, path)
+          emit(arm, path, pending, replay)
       with m.Else():
-        emit(target.otherwise, path)
+        emit(target.otherwise, path, pending, replay)
       return
 
     assigns = target.assigns
-    m.d.comb += writes.on_statements(assigns.comb)
-    m.d.sync += writes.on_statements(assigns.sync)
+    emit_statements("comb", assigns.comb)
+    emit_statements("sync", assigns.sync)
+    completion = merge((*pending, assigns))
+    following = target.following
+    for captured in reversed(completion.after_step):
+      following = Capturing(captured, following)
 
-    # optimization for `Const(True)` and similar
-    if isinstance(assigns.until, Const) and assigns.until.value:
-      m.d.sync += writes.on_statements(assigns.on_done)
-      m.next = schedule(target.following)
+    if _always(completion.until):
+      emit_statements("sync", completion.on_done)
+      m.next = schedule(following)
     else:
-      with m.If(assigns.until):
-        m.d.sync += writes.on_statements(assigns.on_done)
-        m.next = schedule(target.following)
+      retry = target
+      if pending:
+        repeated = merge((*replay, assigns))
+        retry = Action(Assigns(
+          repeated.comb, repeated.sync, completion.on_done, completion.until,
+        ), following)
+      with m.If(completion.until):
+        emit_statements("sync", completion.on_done)
+        m.next = schedule(following)
       with m.Else():
-        # Commit to this action instead of reconsidering its branch next cycle.
-        m.next = schedule(target)
+        m.next = schedule(retry)
 
   first_state = schedule(entry)
   with m.FSM(init=first_state):

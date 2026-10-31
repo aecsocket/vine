@@ -16,6 +16,7 @@ from amaranth.hdl._ast import (
   Concat,
   Operator,
   Part,
+  Property,
   Slice,
   Statement,
   SwitchValue,
@@ -199,6 +200,12 @@ class CaptureWrites(StatementTransformer):
     result = Assign(lhs, stmt.rhs)
     result.src_loc = stmt.src_loc
     return result
+
+  @override
+  def on_Property(self, stmt: Property) -> Property:
+    # Properties have no writable destination; cloning leaves the original
+    # MustUse assertion unused even though its replacement reaches the module.
+    return stmt
 
   def _lhs(self, value: Value) -> Value:
     registered = self._registers.get(id(value))

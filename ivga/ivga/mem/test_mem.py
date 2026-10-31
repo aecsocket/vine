@@ -11,16 +11,18 @@ dut = m.submodules.alloc = Alloc(8, heap)
 
 async def testbench_foo(ctx):
   await ctx.tick().repeat(10)
-  assert ctx.get(dut.granted) == False
   ctx.set(dut.req_alloc, 2)
+  assert ctx.get(dut.alloc_addrs[0]) == 0
+  assert ctx.get(dut.alloc_addrs[1]) == 0
+
   await ctx.tick()
   ctx.set(dut.req_alloc, 0)
-  # assert ctx.get(dut.granted) == True
   assert ctx.get(dut.alloc_addrs[0]) == 0
   assert ctx.get(dut.alloc_addrs[1]) == 1
 
   ctx.set(dut.req_free, 2)
   ctx.set(dut.free_addrs, [0, 1])
+
   await ctx.tick()
   ctx.set(dut.req_free, 0)
   await ctx.tick().repeat(2)

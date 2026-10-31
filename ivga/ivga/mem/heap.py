@@ -41,6 +41,37 @@ class HeapPort(wiring.Signature):
       "read_data": In(Word),
     })
 
+  @staticmethod
+  def read(f: Flow, heap, *, addr: ValueLike) -> ValueLike:
+    result = f.capture(heap.read_data, after_step=True)
+    f.d.comb += [
+      heap.read.eq(True),
+      heap.addr.eq(addr),
+    ]
+    f.d.until += heap.granted
+    return result
+
+  @staticmethod
+  def write(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> None:
+    f.d.comb += [
+      heap.write.eq(True),
+      heap.addr.eq(addr),
+      heap.write_data.eq(write),
+    ]
+    f.d.until += heap.granted
+
+  @staticmethod
+  def swap(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> ValueLike:
+    result = f.capture(heap.read_data, after_step=True)
+    f.d.comb += [
+      heap.read.eq(True),
+      heap.write.eq(True),
+      heap.addr.eq(addr),
+      heap.write_data.eq(write),
+    ]
+    f.d.until += heap.granted
+    return result
+
 
 class Heap(wiring.Component):
   control: In(HeapPort())
@@ -78,31 +109,3 @@ HeapArbiter = make_arbiter_type(
   HeapPort,
   lambda client: client.read | client.write,
 )
-
-def heap_read(f: Flow, heap, *, addr: ValueLike) -> ValueLike:
-  result = f.capture(heap.read_data, after_step=True)
-  f.d.comb += [
-    heap.read.eq(True),
-    heap.addr.eq(addr),
-  ]
-  f.d.until += heap.granted
-  return result
-
-def heap_write(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> None:
-  f.d.comb += [
-    heap.write.eq(True),
-    heap.addr.eq(addr),
-    heap.write_data.eq(write),
-  ]
-  f.d.until += heap.granted
-
-def heap_swap(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> ValueLike:
-  result = f.capture(heap.read_data, after_step=True)
-  f.d.comb += [
-    heap.read.eq(True),
-    heap.write.eq(True),
-    heap.addr.eq(addr),
-    heap.write_data.eq(write),
-  ]
-  f.d.until += heap.granted
-  return result

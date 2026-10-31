@@ -1,10 +1,8 @@
-from typing import override
-
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.memory import Memory, ReadPort, WritePort
 from amaranth.lib.wiring import In, Out
-from amflow import Operation, ValueLike
+from amflow import Flow, ValueLike
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import flatten
@@ -36,6 +34,23 @@ class StackPort(wiring.Signature):
       "empty": In(1),
       "full": In(1),
     })
+
+  @staticmethod
+  def push(f: Flow, stack, *, data: ValueLike) -> None:
+    can_push = ~stack.full
+    f.d.comb += [
+      stack.req_push.eq(can_push),
+      stack.push_data.eq(data),
+    ]
+    f.d.until += can_push & stack.granted
+
+  @staticmethod
+  def pop(f: Flow, stack) -> ValueLike:
+    result = f.capture(stack.pop_data, after_step=True)
+    can_pop = ~stack.empty
+    f.d.comb += stack.req_pop.eq(can_pop)
+    f.d.until += can_pop & stack.granted
+    return result
 
 
 class Stack(wiring.Component):
@@ -116,47 +131,3 @@ StackArbiter = make_arbiter_type(
   lambda client: client.req_push | client.req_pop,
   always_out=("empty", "full"),
 )
-
-
-
-class StackPush(Operation[None]):
-  def __init__(self, name: str, stack, data: ValueLike):
-    self.stack = stack
-    self.data = data
-    super().__init__(name, None)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    can_push = ~self.stack.full
-    m.d.comb += [
-      self.stack.req_push.eq(can_push),
-      self.stack.push_data.eq(self.data),
-    ]
-    return can_push & self.stack.granted
-
-
-class StackPop(Operation[Value]):
-  def __init__(self, name: str, stack):
-    self.stack = stack
-    shape = Shape.cast(stack.pop_data.shape())
-    self.issued = Signal()
-    self.just_popped = Signal()
-    self.saved = Signal(shape)
-    super().__init__(name, Signal(shape))
-
-  @override
-  def prepare(self, m: Module) -> None:
-    m.d.sync += self.just_popped.eq(self.issued)
-    with m.If(self.just_popped):
-      m.d.sync += self.saved.eq(self.stack.pop_data)
-    latest = Mux(self.just_popped, self.stack.pop_data, self.saved)
-    m.d.comb += self.result.eq(latest)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    can_pop = ~self.stack.empty
-    m.d.comb += [
-      self.stack.req_pop.eq(can_pop),
-      self.issued.eq(can_pop & self.stack.granted),
-    ]
-    return self.issued

@@ -2,8 +2,8 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
-from amflow import Flow, expand
-from ivga.mem.heap import heap_read, heap_write
+from amflow import Flow, ValueLike, expand
+from ivga.mem.heap import HeapPort
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import ADDR_MAX, Addr, Stat, flatten
@@ -29,6 +29,48 @@ class AllocPort(wiring.Signature):
       "stat_reset": Out(1),
     })
 
+  @staticmethod
+  def alloc(f: Flow, alloc, *, n_words: ValueLike) -> tuple[Signal, Signal]:
+    accepted = Signal()
+    addrs, oom = Signal.like(alloc.alloc_addrs), Signal.like(alloc.oom)
+
+    f.d.comb += alloc.req_alloc.eq(Mux(accepted, False, n_words))
+    f.d.sync += [
+      accepted.eq(accepted | alloc.granted),
+      Assert(accepted | (Value.cast(n_words) >= 1), "Allocation requires at least one word"),
+    ]
+    f.d.until += accepted & alloc.done
+    f.d.on_done += [
+      accepted.eq(False),
+      addrs.eq(alloc.alloc_addrs),
+      oom.eq(alloc.oom),
+      Assert(~alloc.bad_request, "Allocator rejected allocation request"),
+    ]
+    return addrs, oom
+
+  @staticmethod
+  def free(f: Flow, alloc, *, n_words: ValueLike, addrs: ValueLike) -> None:
+    accepted = Signal()
+
+    f.d.comb += [
+      alloc.req_free.eq(Mux(accepted, False, n_words)),
+      alloc.free_addrs.eq(addrs),
+    ]
+    f.d.sync += [
+      accepted.eq(accepted | alloc.granted),
+      Assert(accepted | (Value.cast(n_words) >= 1), "Free requires at least one word"),
+    ]
+    f.d.until += accepted & alloc.done
+    f.d.on_done += [
+      accepted.eq(False),
+      Assert(~alloc.bad_request, "Allocator rejected free request"),
+    ]
+
+  @staticmethod
+  def free_one(f: Flow, alloc, *, addr: ValueLike) -> None:
+    AllocPort.free(f, alloc, n_words=1, addrs=addr)
+
+
 class Alloc(wiring.Component):
   control: In(AllocPort())
 
@@ -51,8 +93,7 @@ class Alloc(wiring.Component):
       alloc.oom.eq(False),
       alloc.bad_request.eq(False),
     ]
-
-    expand(m, lambda f: program(f, self))
+    expand(m, lambda f: program(f, alloc))
 
     with m.If(alloc.empty > alloc.stat_peak):
       m.d.sync += alloc.stat_peak.eq(alloc.empty)
@@ -107,7 +148,7 @@ def program(f: Flow, alloc: Alloc):
           alloc.stat_frees.eq(alloc.stat_frees + 1),
           remaining.eq(remaining - 1),
         ]
-        yield heap_write(f, alloc.heap, addr=addr, write=alloc.free_head)
+        yield HeapPort.write(f, alloc.heap, addr=addr, write=alloc.free_head)
 
       f.d.sync += alloc.done.eq(True)
       yield
@@ -121,7 +162,7 @@ def do_alloc(f: Flow, alloc: Alloc):
     # prioritize taking from the free list
     top_idx = (req_alloc - 1).as_unsigned()
     f.d.sync += alloc.alloc_addrs[top_idx].eq(alloc.free_head)
-    next_free_head = yield heap_read(f, alloc.heap, addr=alloc.free_head)
+    next_free_head = yield HeapPort.read(f, alloc.heap, addr=alloc.free_head)
 
     f.d.on_done += [
       req_alloc.eq(req_alloc - 1),
@@ -152,5 +193,5 @@ def do_alloc(f: Flow, alloc: Alloc):
 
 AllocArbiter = make_arbiter_type(
   AllocPort,
-  lambda client: client.req_alloc | client.req_free,
+  lambda client: (client.req_alloc != 0) | (client.req_free != 0),
 )
