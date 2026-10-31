@@ -1,7 +1,9 @@
+from collections.abc import Iterable
+
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
-from amflow import Flow, expand
+from amflow import Flow, ValueLike, expand
 from ivga.mem.alloc import AllocPort
 from ivga.mem.heap import HeapPort
 from ivga.mem.stack import StackPort
@@ -24,6 +26,35 @@ class LinkerPort(wiring.Signature):
       "stat_reset": Out(1),
     })
 
+  @staticmethod
+  def link(f: Flow, linker, *, a: ValueLike, b: ValueLike):
+    accepted = Signal()
+    f.d.comb += linker.req_link.eq(~accepted)
+    f.d.sync += accepted.eq(accepted | linker.granted)
+    f.d.until += accepted & linker.done
+    f.d.on_done += accepted.eq(False)
+
+  @staticmethod
+  def link_all(f: Flow, linkers: Iterable[tuple["Linker", ValueLike, ValueLike]]):
+    for linker, a, b in linkers:
+      accepted = Signal()
+      was_done = Signal()
+      done_now = accepted & linker.done
+      f.d.comb += [
+        linker.req_link.eq(~accepted),
+        linker.req_a.eq(a),
+        linker.req_b.eq(b),
+      ]
+      f.d.sync += [
+        accepted.eq(accepted | linker.granted),
+        was_done.eq(was_done | done_now),
+      ]
+      f.d.until += was_done | done_now
+      f.d.on_done += [
+        accepted.eq(False),
+        was_done.eq(False)
+      ]
+
 
 class Linker(wiring.Component):
   control: In(LinkerPort())
@@ -33,9 +64,6 @@ class Linker(wiring.Component):
   fault: Out(FaultPort())
 
   def __init__(self):
-    self.a = Signal(Port)
-    self.b = Signal(Port)
-    self.previous = Signal(Port)
     super().__init__()
     flatten(self, self.control)
 

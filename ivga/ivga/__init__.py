@@ -36,7 +36,7 @@ class Port(_data.Struct):
   # unsafe if used on a port that's not
   # a principal port of Comb or ExtVal
   @staticmethod
-  def aux(m: _am.Module, port):
+  def aux(m, port) -> tuple[_am.Signal, _am.Signal]:
     one, two = _am.Signal(Port), _am.Signal(Port)
     m.d.comb += [
       one.tag.eq(Tag.WIRE),
