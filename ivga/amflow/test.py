@@ -51,59 +51,6 @@ def do_something(f: Flow, dummy: Dummy):
   yield tick(f)
 
 
-def expanded_ver_of_do_something(m: Module, dummy: Dummy):
-  read_6 = Signal(8)
-
-  with m.FSM(init="init_6"):
-    with m.State("init_6"):
-      m.d.comb += [
-        dummy.memory_write.en.eq(True),
-        dummy.memory_write.addr.eq(6),
-        dummy.memory_write.data.eq(0x42),
-      ]
-      m.next = "init_7"
-    with m.State("init_7"):
-      m.d.comb += [
-        dummy.memory_write.en.eq(True),
-        dummy.memory_write.addr.eq(7),
-        dummy.memory_write.data.eq(0x99),
-      ]
-      m.next = "read_6"
-    with m.State("read_6"):
-      m.d.comb += [
-        dummy.memory_read.en.eq(True),
-        dummy.memory_read.addr.eq(6),
-      ]
-      m.next = "read_7"
-    with m.State("read_7"):
-      m.d.sync += read_6.eq(dummy.memory_read.data)
-      m.d.comb += [
-        dummy.memory_read.en.eq(True),
-        dummy.memory_read.addr.eq(7),
-      ]
-      m.next = "if"
-    with m.State("if"):
-      with m.If(read_6 == dummy.memory_read.data):
-        # MERGED WITH NEXT OP
-        m.d.comb += [
-          dummy.memory_write.en.eq(True),
-          dummy.memory_write.addr.eq(8),
-          dummy.memory_write.data.eq(read_6),
-        ]
-        m.next = "set_done"
-      with m.Else():
-        # MERGED WITH NEXT OP
-        m.d.comb += [
-          dummy.memory_write.en.eq(True),
-          dummy.memory_write.addr.eq(8),
-          dummy.memory_write.data.eq(dummy.memory_read.data),
-        ]
-        m.next = "set_done"
-    with m.State("set_done"):
-      m.d.sync += dummy.done.eq(True)
-      m.next = "init_6"
-
-
 async def dummy_testbench(ctx):
   await ctx.tick().repeat(10)
 

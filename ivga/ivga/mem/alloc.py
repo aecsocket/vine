@@ -3,7 +3,7 @@ from amaranth.lib import wiring
 from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
 
-from amflow import Flow, Sync
+from amflow import Flow, Sync, sync
 from ivga import ADDR_MAX, Addr, Stat, flatten
 from ivga.mem.heap import HeapPort, HeapWrite
 
@@ -57,14 +57,14 @@ def idle(f: Flow, alloc: Alloc):
 
   with f.If(alloc.req_alloc > 0):
     with f.If(alloc.req_alloc > LANES):
-      f += Sync("mark_invalid_alloc", [
+      yield sync([
         alloc.done.eq(True),
         alloc.bad_request.eq(True),
       ])
     with f.Elif(alloc.req_alloc > available):
-      f += Sync("mark_oom", [
+      yield sync([
         alloc.done.eq(True),
-        alloc.bad_request.eq(True),
+        alloc.oom.eq(True),
       ])
     with f.Else():
       do_alloc(f, alloc)

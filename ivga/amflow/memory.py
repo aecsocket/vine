@@ -16,7 +16,6 @@ def memory_read(f: Flow, read: ReadPort, *, addr: ValueLike) -> Step:
   m.d.sync += just_read.eq(issued)
   with m.If(just_read):
     m.d.sync += saved.eq(read.data)
-
   # the latest value is:
   # - the read port's `data`, if we've just completed a read cycle
   # - the value saved on the last read cycle, if not

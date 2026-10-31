@@ -27,20 +27,24 @@ class Flow:
     # assignment accumulators
     self.comb: list[Statement] = []
     self.sync: list[Statement] = []
+    self.on_done: list[Statement] = []
 
   def accumulate(
     self,
     *,
-    comb: Statement | Iterable[Statement] = (),
-    sync: Statement | Iterable[Statement] = (),
+    comb: Iterable[Statement] = (),
+    sync: Iterable[Statement] = (),
+    on_done: Iterable[Statement] = (),
   ):
-    self.comb.extend([comb] if isinstance(comb, Statement) else comb)
-    self.sync.extend([sync] if isinstance(sync, Statement) else sync)
+    self.comb.extend(comb)
+    self.sync.extend(sync)
+    self.on_done.extend(on_done)
 
   def finish_step(self, step: Step):
-    self.block.items.append(Assigns(self, step))
-    self.comb.clear()
-    self.sync.clear()
+    comb, self.comb = self.comb, []
+    sync, self.sync = self.sync, []
+    on_done, self.on_done = self.on_done, []
+    self.block.items.append(Assigns(comb, sync, on_done, step.until))
 
   def If(self, cond: Value) -> FlowIf:
     return FlowIf(self, cond)
@@ -69,14 +73,19 @@ class Block:
     self.items: list[Assigns | Branch] = []
 
 class Assigns:
-  """List of `comb` and `sync` assignments to add to `m.d` during
-  elaboration of a state.
-  """
+  """List of assignments to add to `m.d` during elaboration of a state."""
 
-  def __init__(self, flow: Flow, step: Step):
-    self.comb = flow.comb.copy()
-    self.sync = flow.sync.copy()
-    self.until = step.until
+  def __init__(
+    self,
+    comb: list[Statement],
+    sync: list[Statement],
+    on_done: list[Statement],
+    until: Value,
+  ):
+    self.comb = comb
+    self.sync = sync
+    self.on_done = on_done
+    self.until = until
 
 class Branch:
   def __init__(self):
@@ -182,27 +191,104 @@ def expand(
       step = gen.send(result)
       flow.finish_step(step)
       result = step.out
-
-      flow.comb.clear()
-      flow.sync.clear()
     except StopIteration:
       if flow.comb:
         raise ValueError("Uncommitted `comb` effects; did you forget to `yield`?")
       if flow.sync:
         raise ValueError("Uncommitted `sync` effects; did you forget to `yield`?")
+      if flow.on_done:
+        raise ValueError("Uncommitted `on_done` effects; did you forget to `yield`?")
       break
 
-  if not flow.root.items:
-    # nothing to elaborate
+  class Action:
+    def __init__(self, assigns: Assigns, following: Target):
+      self.assigns = assigns
+      self.following = following
+
+  class Decision:
+    def __init__(
+      self,
+      arms: list[tuple[Value, Target]],
+      otherwise: Target,
+    ):
+      self.arms = arms
+      self.otherwise = otherwise
+
+  # None is the end of the program, which loops back to its entry.
+  type Target = Action | Decision | None
+
+  def lower(block: Block, after: Target) -> Target:
+    entry = after
+    for item in reversed(block.items):
+      if isinstance(item, Assigns):
+        entry = Action(item, entry)
+      else:
+        otherwise = lower(item.or_else, entry) if item.or_else is not None else entry
+        arms = [(cond, lower(body, entry)) for cond, body in item.arms]
+        # A branch whose arms all fall through has no work to dispatch.
+        if all(target is otherwise for _, target in arms):
+          entry = otherwise
+        else:
+          entry = Decision(arms, otherwise)
+    return entry
+
+  entry = lower(flow.root, None)
+  if entry is None:
     return
 
-  with m.FSM(init=str(0)):
-    for i, state in enumerate(states):
+  states: list[Action | Decision] = []
+  names: dict[Action | Decision, str] = {}
+
+  def schedule(target: Target) -> str:
+    if target is None:
+      target = entry
+    assert target is not None
+    if target not in names:
+      names[target] = str(len(states))
+      states.append(target)
+    return names[target]
+
+  def emit(target: Target, decisions: tuple[Decision, ...] = ()) -> None:
+    if target is None:
+      target = entry
+    assert target is not None
+
+    if isinstance(target, Decision):
+      if target in decisions:
+        # An entire iteration with no yielded action simply idles here.
+        m.next = schedule(entry)
+        return
+      decisions = (*decisions, target)
+      for i, (cond, arm) in enumerate(target.arms):
+        with m.If(cond) if i == 0 else m.Elif(cond):
+          emit(arm, decisions)
+      with m.Else():
+        emit(target.otherwise, decisions)
+      return
+
+    assigns = target.assigns
+    m.d.comb += assigns.comb
+    m.d.sync += assigns.sync
+
+    # optimization for `Const(True)` and similar
+    if isinstance(assigns.until, Const) and assigns.until.value:
+      m.d.sync += assigns.on_done
+      m.next = schedule(target.following)
+    else:
+      with m.If(assigns.until):
+        m.d.sync += assigns.on_done
+        m.next = schedule(target.following)
+      with m.Else():
+        # Commit to this action instead of reconsidering its branch next cycle.
+        m.next = schedule(target)
+
+  first_state = schedule(entry)
+  with m.FSM(init=first_state):
+    i = 0
+    while i < len(states):
       with m.State(str(i)):
-        m.d.comb += state.comb
-        with m.If(state.until):
-          m.d.sync += state.sync
-          m.next = str((i + 1) % len(states))
+        emit(states[i])
+      i += 1
 
 # helpers / higher-level API
 
@@ -212,9 +298,14 @@ def step(
   comb: Statement | Iterable[Statement] = (),
   sync: Statement | Iterable[Statement] = (),
   until: Value | None = None,
+  on_done: Statement | Iterable[Statement] = (),
   out: Value | None = None,
 ) -> Step:
-  f.accumulate(comb=comb, sync=sync)
+  f.accumulate(
+    comb=[comb] if isinstance(comb, Statement) else comb,
+    sync=[sync] if isinstance(sync, Statement) else sync,
+    on_done=[on_done] if isinstance(on_done, Statement) else on_done,
+  )
   return Step(
     until=Const(True) if until is None else until,
     out=out,

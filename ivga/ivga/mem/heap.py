@@ -1,10 +1,8 @@
-from typing import override
-
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
-from amflow import Operation, ValueLike
+from amflow import Flow, Step, ValueLike, step
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import Addr, Word, flatten
@@ -26,6 +24,11 @@ class HeapPort(wiring.Signature):
   ```rs
   let read_data = swap(&mut addr, write_data);
   ```
+
+  `HeapPort` has no `done` signal; as soon as `granted` is high, on the next
+  cycle `read_data` will be available, and `write_data` will have been written.
+  This is in contrast to other ports like `AllocPort`, which take a variable
+  amount of time to complete after `granted` (that's why `done` exists there).
   """
 
   def __init__(self):
@@ -35,7 +38,6 @@ class HeapPort(wiring.Signature):
       "addr": Out(Addr),
       "write_data": Out(Word),
       "granted": In(1),
-      "done": In(1),
       "read_data": In(Word),
     })
 
@@ -68,7 +70,6 @@ class Heap(wiring.Component):
       write.data.eq(self.write_data),
       self.granted.eq(has_request),
     ]
-    m.d.sync += self.done.eq(has_request)
 
     return m
 
@@ -78,87 +79,59 @@ HeapArbiter = make_arbiter_type(
   lambda client: client.read | client.write,
 )
 
+def heap_read(f: Flow, heap, *, addr: ValueLike) -> Step:
+  issued = Signal()
+  just_read = Signal()
+  saved = Signal.like(heap.read_data)
 
-class HeapRead(Operation[Value]):
-  def __init__(self, name: str, heap, addr: ValueLike):
-    self.heap = heap
-    self.addr = addr
+  m = f.m
+  m.d.sync += just_read.eq(issued)
+  with m.If(just_read):
+    m.d.sync += saved.eq(heap.read_data)
+  latest = Mux(just_read, heap.read_data, saved)
 
-    # when we're in this operation's state, we prefer `heap.read_data`;
-    # else, we use the value saved from the last `heap.read_data`
-    self.issued = Signal()
-    self.just_read = Signal()
-    self.saved = Signal(Word)
-    result = Signal(Word)
-    super().__init__(name, result)
+  return step(
+    f,
+    comb=[
+      heap.read.eq(True),
+      heap.addr.eq(addr),
+      issued.eq(heap.granted),
+    ],
+    until=heap.granted,
+    out=latest,
+  )
 
-  @override
-  def prepare(self, m: Module) -> None:
-    m.d.sync += self.just_read.eq(self.issued)
-    with m.If(self.just_read):
-      m.d.sync += self.saved.eq(self.heap.read_data)
+def heap_write(f: Flow, heap, *, addr: ValueLike, data: ValueLike) -> Step:
+  return step(
+    f,
+    comb=[
+      heap.write.eq(True),
+      heap.addr.eq(addr),
+      heap.write_data.eq(data),
+    ],
+    until=heap.granted,
+  )
 
-    # `saved` is 1 cycle behind `read.data`;
-    # so if we've just read the data, then expose the most recent read data
-    latest = Mux(self.just_read, self.heap.read_data, self.saved)
-    m.d.comb += self.result.eq(latest)
+def heap_swap(f: Flow, heap, *, addr: ValueLike, write_data: ValueLike) -> Step:
+  issued = Signal()
+  just_read = Signal()
+  saved = Signal.like(heap.read_data)
 
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.comb += [
-      self.issued.eq(self.heap.granted),
-      self.heap.read.eq(True),
-      self.heap.addr.eq(self.addr),
-    ]
-    return self.heap.granted
+  m = f.m
+  m.d.sync += just_read.eq(issued)
+  with m.If(just_read):
+    m.d.sync += saved.eq(heap.read_data)
+  latest = Mux(just_read, heap.read_data, saved)
 
-
-class HeapWrite(Operation[None]):
-  def __init__(self, name: str, heap, addr: ValueLike, data: ValueLike):
-    self.heap = heap
-    self.addr = addr
-    self.data = data
-    super().__init__(name, None)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.comb += [
-      self.heap.write.eq(True),
-      self.heap.addr.eq(self.addr),
-      self.heap.write_data.eq(self.data),
-    ]
-    return self.heap.granted
-
-
-class HeapSwap(Operation[Value]):
-  def __init__(self, name: str, heap, addr: ValueLike, write_data: ValueLike):
-    self.heap = heap
-    self.addr = addr
-    self.write_data = write_data
-
-    # when we're in this operation's state, we prefer `heap.read_data`;
-    # else, we use the value saved from the last `heap.read_data`
-    self.issued = Signal()
-    self.just_read = Signal()
-    self.saved = Signal(Word)
-    result = Signal(Word)
-    super().__init__(name, result)
-
-  @override
-  def prepare(self, m: Module) -> None:
-    m.d.sync += self.just_read.eq(self.issued)
-    with m.If(self.just_read):
-      m.d.sync += self.saved.eq(self.heap.read_data)
-    latest = Mux(self.just_read, self.heap.read_data, self.saved)
-    m.d.comb += self.result.eq(latest)
-
-  @override
-  def emit(self, m: Module) -> Value:
-    m.d.comb += [
-      self.issued.eq(self.heap.granted),
-      self.heap.read.eq(True),
-      self.heap.write.eq(True),
-      self.heap.addr.eq(self.addr),
-      self.heap.write_data.eq(self.write_data),
-    ]
-    return self.heap.granted
+  return step(
+    f,
+    comb=[
+      heap.read.eq(True),
+      heap.write.eq(True),
+      heap.addr.eq(addr),
+      heap.write_data.eq(write_data),
+      issued.eq(heap.granted),
+    ],
+    until=heap.granted,
+    out=latest,
+  )
