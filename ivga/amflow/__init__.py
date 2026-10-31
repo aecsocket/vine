@@ -1,7 +1,6 @@
 from collections.abc import Callable, Generator, Iterable
 from enum import Enum
-from types import SimpleNamespace
-from typing import Any
+from typing import Any, Self
 
 from amaranth import *
 from amaranth import ValueCastable
@@ -24,49 +23,10 @@ class Flow:
     # control flow tree
     self.root = Block()
     self.block = self.root # branch we're currently accumulating into
-    # assignment accumulators
-    self.comb: list[Statement] = []
-    self.sync: list[Statement] = []
-    self.on_done: list[Statement] = []
-    self.d = SimpleNamespace(
-      comb=FlowDomain(lambda stmts: self.accumulate(comb=stmts)),
-      sync=FlowDomain(lambda stmts: self.accumulate(sync=stmts)),
-      on_done=FlowDomain(lambda stmts: self.accumulate(on_done=stmts)),
-      until=FlowDomain(lambda stmt: self.accumulate(until=stmt)),
-    )
-
+    # accumulator for actions to take this step
+    self.d = FlowDomains()
     self.after_step: list[Capture] = []
     self.captures: list[Capture] = []
-    self.until: Value = Const(True)
-
-  def accumulate(
-    self,
-    *,
-    comb: Statement | Iterable[Statement] = (),
-    sync: Statement | Iterable[Statement] = (),
-    until: ValueLike | None = None,
-    on_done: Statement | Iterable[Statement] = (),
-  ):
-    """Add extra operations to perform during the current step we're building."""
-
-    self.comb.extend([comb] if isinstance(comb, Statement) else comb)
-    self.sync.extend([sync] if isinstance(sync, Statement) else sync)
-    self.on_done.extend([on_done] if isinstance(on_done, Statement) else on_done)
-    if until is not None:
-      condition: Value = Value.cast(until)
-      if isinstance(self.until, Const) and self.until.value:
-        self.until = condition
-      else:
-        self.until = self.until.bool() & condition.bool()
-
-  def finish_step(self):
-    comb, self.comb = self.comb, []
-    sync, self.sync = self.sync, []
-    on_done, self.on_done = self.on_done, []
-    after_step, self.after_step = self.after_step, []
-    until, self.until = self.until, Const(True)
-    self.block.items.append(Assigns(comb, sync, on_done, until))
-    self.block.items.extend(after_step)
 
   def capture(self, value: ValueLike, *, after_step: bool = False) -> Capture:
     """Capture on entry here, or in the continuation of the pending step."""
@@ -93,13 +53,41 @@ class Flow:
     return FlowWhile(self, cond)
 
 
-class FlowDomain:
-  def __init__(self, assign):
-    self.assign = assign
+class FlowDomains:
+  def __init__(self):
+    self.comb = FlowDomain()
+    self.sync = FlowDomain()
+    self.on_done = FlowDomain()
+    self.until = UntilDomain()
 
-  def __iadd__(self, stmts):
-    self.assign(stmts)
+
+class FlowDomain:
+  def __init__(self):
+    self.statements: list[Statement] = []
+
+  def __iadd__(self, stmts: Statement | Iterable[Statement]) -> Self:
+    self.statements.extend([stmts] if isinstance(stmts, Statement) else stmts)
     return self
+
+  def take(self) -> list[Statement]:
+    statements, self.statements = self.statements, []
+    return statements
+
+class UntilDomain:
+  def __init__(self):
+    self.condition: Value = Const(True)
+
+  def __iadd__(self, value: ValueLike) -> Self:
+    condition: Value = Value.cast(value)
+    if isinstance(self.condition, Const) and self.condition.value:
+      self.condition = condition
+    else:
+      self.condition = self.condition.bool() & condition.bool()
+    return self
+
+  def take(self) -> Value:
+    condition, self.condition = self.condition, Const(True)
+    return condition
 
 class Block:
   """List of operations to perform during elaboration, which may branch out
@@ -247,20 +235,31 @@ def expand(
   gen = make_gen(flow)
   result = None
 
+  def _finish_step() -> None:
+    flow.block.items.append(Assigns(
+      flow.d.comb.take(),
+      flow.d.sync.take(),
+      flow.d.on_done.take(),
+      flow.d.until.take(),
+    ))
+    after_step, flow.after_step = flow.after_step, []
+    flow.block.items.extend(after_step)
+
   while True:
     try:
       result = gen.send(result)
-      flow.finish_step()
+      _finish_step()
     except StopIteration:
-      if flow.comb:
+      if flow.d.comb.statements:
         raise ValueError("Uncommitted `comb` effects; did you forget to `yield`?")
-      if flow.sync:
+      if flow.d.sync.statements:
         raise ValueError("Uncommitted `sync` effects; did you forget to `yield`?")
-      if flow.on_done:
+      if flow.d.on_done.statements:
         raise ValueError("Uncommitted `on_done` effects; did you forget to `yield`?")
       if flow.after_step:
         raise ValueError("Uncommitted `after_step` captures; did you forget to `yield`?")
-      if not isinstance(flow.until, Const) or not flow.until.value:
+      until: Value = flow.d.until.condition
+      if not isinstance(until, Const) or not until.value:
         raise ValueError("Uncommitted `until` condition; did you forget to `yield`?")
       break
 

@@ -3,7 +3,7 @@ from amaranth.lib import wiring
 from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, expand
-from ivga.mem.heap import HeapPort, heap_read, heap_write
+from ivga.mem.heap import heap_read, heap_write
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import ADDR_MAX, Addr, Stat, flatten
@@ -32,7 +32,7 @@ class AllocPort(wiring.Signature):
 class Alloc(wiring.Component):
   control: In(AllocPort())
 
-  def __init__(self, capacity: int, heap: HeapPort):
+  def __init__(self, capacity: int, heap):
     assert 0 < capacity <= ADDR_MAX
     assert capacity % 2 == 0
 
@@ -45,17 +45,28 @@ class Alloc(wiring.Component):
     flatten(self, self.control)
 
   def elaborate(self, platform):
-    m = Module()
+    m, alloc = Module(), self
+    m.d.sync += [
+      alloc.done.eq(False),
+      alloc.oom.eq(False),
+      alloc.bad_request.eq(False),
+    ]
+
     expand(m, lambda f: program(f, self))
+
+    with m.If(alloc.empty > alloc.stat_peak):
+      m.d.sync += alloc.stat_peak.eq(alloc.empty)
+    with m.If(alloc.stat_reset):
+      m.d.sync += [
+        alloc.stat_allocs.eq(0),
+        alloc.stat_frees.eq(0),
+        alloc.stat_peak.eq(0),
+      ]
+
     return m
 
 def program(f: Flow, alloc: Alloc):
-  f.m.d.sync += [
-    alloc.done.eq(False),
-    alloc.oom.eq(False),
-    alloc.bad_request.eq(False),
-  ]
-
+  f.d.comb += alloc.granted.eq(True)
   available = alloc.capacity - alloc.empty + alloc.free_count
 
   with f.If(alloc.req_alloc > 0):
@@ -108,7 +119,10 @@ def do_alloc(f: Flow, alloc: Alloc):
 
   with f.While((req_alloc != 0) & (alloc.free_head != ADDR_EMPTY)):
     # prioritize taking from the free list
+    top_idx = (req_alloc - 1).as_unsigned()
+    f.d.sync += alloc.alloc_addrs[top_idx].eq(alloc.free_head)
     next_free_head = yield heap_read(f, alloc.heap, addr=alloc.free_head)
+
     f.d.on_done += [
       req_alloc.eq(req_alloc - 1),
       alloc.free_count.eq(alloc.free_count - 1),
@@ -122,8 +136,10 @@ def do_alloc(f: Flow, alloc: Alloc):
     # take from the bump allocator.
     # we've already asserted that we have enough free capacity.
     for lane in range(LANES):
-      with f.If(lane < req_alloc):
-        f.d.sync += alloc.alloc_addrs[lane].eq(alloc.empty + lane)
+      lane_alloc = alloc.alloc_addrs[lane]
+      f.d.sync += lane_alloc.eq(
+        Mux(lane < req_alloc, alloc.empty + lane, lane_alloc)
+      )
     yield
 
   f.d.sync += [

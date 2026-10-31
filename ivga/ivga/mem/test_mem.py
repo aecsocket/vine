@@ -1,45 +1,30 @@
-import amflow
 from amaranth import *
-from amaranth.lib import wiring
 from amaranth.sim import Simulator
 from ivga.mem.alloc import Alloc
-from ivga.mem.heap import Heap, HeapRead, HeapWrite
+from ivga.mem.heap import Heap
 
 PERIOD = 1e-6
 
 m = Module()
 heap = m.submodules.heap = Heap()
-
-def some_ops():
-  yield HeapWrite("init_0", heap, addr=0, data=6)
-  yield HeapWrite("init_1", heap, addr=1, data=7)
-
-  a = yield HeapRead("read_0", heap, addr=0)
-  b = yield HeapRead("read_1", heap, addr=1)
-  c = a + b
-  yield HeapWrite("write_5", heap, addr=5, data=c)
-
-amflow.expand(m, some_ops())
-
-# dut = m.submodules.alloc = Alloc(8)
-# wiring.connect(m, dut.heap, heap.control)
+dut = m.submodules.alloc = Alloc(8, heap)
 
 async def testbench_foo(ctx):
   await ctx.tick().repeat(10)
-#   assert ctx.get(dut.done) == False
-#   ctx.set(dut.req_alloc, 2)
-#   await ctx.tick()
-#   ctx.set(dut.req_alloc, 0)
-#   assert ctx.get(dut.done) == True
-#   assert ctx.get(dut.alloc_addrs[0]) == 0
-#   assert ctx.get(dut.alloc_addrs[1]) == 1
-#
-#   ctx.set(dut.req_free, 2)
-#   ctx.set(dut.free_addrs, [0, 1])
-#   await ctx.tick()
-#   ctx.set(dut.req_free, 0)
-#   await ctx.tick().repeat(2)
-#   assert ctx.get(dut.done) == True
+  assert ctx.get(dut.granted) == False
+  ctx.set(dut.req_alloc, 2)
+  await ctx.tick()
+  ctx.set(dut.req_alloc, 0)
+  # assert ctx.get(dut.granted) == True
+  assert ctx.get(dut.alloc_addrs[0]) == 0
+  assert ctx.get(dut.alloc_addrs[1]) == 1
+
+  ctx.set(dut.req_free, 2)
+  ctx.set(dut.free_addrs, [0, 1])
+  await ctx.tick()
+  ctx.set(dut.req_free, 0)
+  await ctx.tick().repeat(2)
+  assert ctx.get(dut.granted) == True
 
 sim = Simulator(m)
 sim.add_clock(PERIOD)
