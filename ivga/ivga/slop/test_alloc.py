@@ -5,18 +5,18 @@ From ivga/: python -m ivga.slop.test_alloc
 
 The default runs deterministic Amaranth simulations; only --formal needs the
 existing Yosys/SMTBMC/Z3 toolchain. Allocations and frees count individual words,
-including odd counts. Oversized requests fail with bad_request; insufficient
+including odd counts. Oversized requests assert synchronously; insufficient
 capacity fails atomically with oom. Frees push each word in reverse input order.
 
 Heap requests are accepted exactly once on request && granted. Writes commit at
 that edge; read data is available in the following cycle, with no done signal.
 Grant stalls are independent of this fixed response latency. Poisoned heap data
 and changing busy-time inputs check that the allocator retains accepted inputs.
-Invalid/double frees are deliberately not generated, except rejected oversized
-batches whose payload must not be inspected.
+Invalid/double frees are deliberately not generated, except oversized batches
+in isolated assertion tests whose payload must not be inspected.
 
 Timing is checked independently of the implementation, counting the acceptance
-edge as edge 1. With an always-granting heap: bump/rejection takes 1 edge, freeing
+edge as edge 1. With an always-granting heap: bump/OOM takes 1 edge, freeing
 N words takes N edges, and R metadata reads take R + 1 edges (including mixed
 reuse/bump allocation). Requests must use every available grant starting on the
 control acceptance edge. Only denied grants may extend these budgets; the last
@@ -60,11 +60,10 @@ class Oracle:
     return self.free[-1] if self.free else EMPTY
 
   def allocate(self, count):
-    assert count > 0
-    bad_request = count > LANES
-    oom = not bad_request and count > self.capacity - self.bump + len(self.free)
-    if bad_request or oom:
-      return oom, bad_request, (), []
+    assert 0 < count <= LANES
+    oom = count > self.capacity - self.bump + len(self.free)
+    if oom:
+      return True, (), []
     result, transactions = [], []
     for _ in range(min(count, len(self.free))):
       addr = self.free.pop()
@@ -75,12 +74,10 @@ class Oracle:
     self.bump += remaining
     assert len(set(result)) == count and not set(result) & self.live
     self.live.update(result)
-    return False, False, tuple(result), transactions
+    return False, tuple(result), transactions
 
   def release(self, addresses):
-    assert addresses
-    if len(addresses) > LANES:
-      return True, []
+    assert 0 < len(addresses) <= LANES
     assert len(set(addresses)) == len(addresses)
     assert set(addresses) <= self.live, "test attempted an invalid/double free"
     transactions = []
@@ -88,7 +85,7 @@ class Oracle:
       self.live.remove(addr)
       transactions.append(("write", addr, self.head))
       self.free.append(addr)
-    return False, transactions
+    return transactions
 
 
 @dataclass
@@ -252,15 +249,15 @@ class Harness:
     assert self.kind is None
     self.kind = kind
     if kind == "alloc":
-      self.oom, self.bad_request, self.result, transactions = self.oracle.allocate(count)
+      self.oom, self.result, transactions = self.oracle.allocate(count)
     else:
       self.oom, self.result = False, ()
-      self.bad_request, transactions = self.oracle.release(addresses)
+      transactions = self.oracle.release(addresses)
     self.heap.expected.extend(transactions)
     self.timing_start = self.cycle
     self.transaction_start = len(self.heap.accepted_cycles)
     self.minimum_grants, self.minimum_done = minimum_schedule(self.cycle, transactions, self.heap.grants)
-    if self.oom or self.bad_request:
+    if self.oom:
       self.timing_path = f"rejected {kind}"
     elif kind == "free":
       self.timing_path = "free"
@@ -274,10 +271,9 @@ class Harness:
     ctx, dut, oracle = self.ctx, self.dut, self.oracle
     assert ctx.get(dut.done)
     assert bool(ctx.get(dut.oom)) == self.oom, ("oom", self.oom)
-    assert bool(ctx.get(dut.bad_request)) == self.bad_request, ("bad_request", self.bad_request)
     assert self.state() == (oracle.bump, len(oracle.free), oracle.head), ("oracle", self.state(), oracle)
     result = ()
-    if self.kind == "alloc" and not (self.oom or self.bad_request):
+    if self.kind == "alloc" and not self.oom:
       result = tuple(ctx.get(dut.alloc_addrs[i]) for i in range(count))
       assert len(set(result)) == count, ("duplicate allocation", result)
       assert set(result) == set(self.result), ("ownership/free-first allocation", result, self.result)
@@ -315,8 +311,8 @@ class Harness:
     ctx.set(dut.req_free, len(frees))
     ctx.set(dut.free_addrs, (list(frees) + [EMPTY] * LANES)[:LANES])
     completed = await self.tick(reset=reset)
-    if self.oom or self.bad_request:
-      assert completed, "rejected request must complete atomically on acceptance"
+    if self.oom:
+      assert completed, "OOM request must complete atomically on acceptance"
     for _ in range(2048):
       if completed:
         break
@@ -344,7 +340,7 @@ class Harness:
     self.ctx.set(self.dut.req_free, 0)
     for _ in range(cycles):
       assert not await self.tick(reset=reset), "done must be a pulse, not a level"
-      assert not self.ctx.get(self.dut.oom) and not self.ctx.get(self.dut.bad_request)
+      assert not self.ctx.get(self.dut.oom)
       assert self.ctx.get(self.dut.granted)
       assert not self.ctx.get(self.dut.heap.read) and not self.ctx.get(self.dut.heap.write)
 
@@ -384,7 +380,6 @@ def test_minimum_schedule():
 def test_minimum_cycle_timing():
   """Every batch size, with and without stalls, including mixed reuse/bump."""
   async def scenario(h):
-    await h.alloc(LANES + 1)  # Rejection must ignore heap backpressure.
     for count in range(1, LANES + 1):
       addresses = await h.alloc(count)
       await h.free(addresses)
@@ -402,12 +397,69 @@ def test_minimum_cycle_timing():
   assert not failures, "\n".join(failures)
 
 
+def test_invalid_request_assertions():
+  """Protocol violations terminate their simulator, never produce responses."""
+  def expect_assert(dut, req_alloc, req_free, message, *, setup=None, grants=(True,), free_addrs=()):
+    sim = Simulator(dut)
+    sim.add_clock(PERIOD)
+
+    async def bench(ctx):
+      h = Harness(ctx, dut, grants=grants)
+      if setup is not None:
+        await setup(h)
+      await h.idle()
+      ctx.set(dut.req_alloc, req_alloc)
+      ctx.set(dut.req_free, req_free)
+      ctx.set(dut.free_addrs, (list(free_addrs) + [EMPTY] * LANES)[:LANES])
+      assert ctx.get(dut.granted)
+      assert not ctx.get(dut.done) and not ctx.get(dut.oom)
+      ctx.set(dut.heap.granted, 0)
+      await ctx.tick()  # The selected idle branch must assert on this edge.
+
+    sim.add_testbench(bench)
+    try:
+      sim.run()
+    except AssertionError as error:
+      assert message in str(error), ("wrong hardware assertion", req_alloc, req_free, str(error))
+    else:
+      raise AssertionError(f"expected hardware assertion: {message} ({req_alloc=}, {req_free=})")
+
+  async def full(h):
+    await h.alloc(h.dut.capacity)
+
+  async def mixed(h):
+    await h.alloc(8)
+    await h.free((5, 2, 4, 3))
+
+  alloc_message = "Allocation request exceeds lane count"
+  free_message = "Free request exceeds lane count"
+  # Cover every spare encoding in each request port's actual lane-count width.
+  for port, capacity, setup, message in (
+    ("req_alloc", 20, None, alloc_message),
+    ("req_free", 2, full, free_message),
+  ):
+    dut = Alloc(capacity)
+    for count in range(LANES + 1, 1 << len(getattr(dut, port))):
+      if count != LANES + 1:
+        dut = Alloc(capacity)
+      expect_assert(dut, count if port == "req_alloc" else 0,
+                    count if port == "req_free" else 0, message, setup=setup)
+
+  # Invalid allocation must ignore heap backpressure, even with reusable words.
+  for grants in ((True,), (False, True), (True, False), (False, False, True, True, False)):
+    expect_assert(Alloc(64), LANES + 1, 0, alloc_message, grants=grants)
+  for count in (9, 14, 15):
+    expect_assert(Alloc(12), count, 0, alloc_message, setup=mixed,
+                  grants=(True, False, False, True))
+  # Allocation wins over both a valid free and an oversized free.
+  for free_count in (1, LANES + 1):
+    expect_assert(Alloc(4), LANES + 1, free_count, alloc_message,
+                  setup=full, grants=(False, True), free_addrs=(0,))
+
+
 def test_bump_and_atomic_oom():
   async def scenario(h):
     await h.idle(3)
-    for n in range(LANES + 1, 1 << len(h.dut.req_alloc)):
-      await h.alloc(n)
-      assert h.oracle.bump == 0
     assert await h.alloc(1) == (0,)
     assert h.stats == (1, 0, 0), "peak must lag the first bump by one edge"
     assert set(await h.alloc(3)) == set(range(1, 4))
@@ -445,8 +497,6 @@ def test_mixed_reuse_and_atomic_oom():
     await h.alloc(8)
     await h.free((5, 2, 4, 3))
     assert h.oracle.free == [3, 4, 2, 5]
-    for n in (9, 14, 15):
-      await h.alloc(n)
     before = len(h.heap.accepted)
     assert set(await h.alloc(8)) == {2, 3, 4, 5, 8, 9, 10, 11}
     assert len(h.heap.accepted) - before == 4
@@ -500,11 +550,10 @@ def test_free_acceptance_edges():
 
 def test_allocation_priority():
   async def scenario(h):
-    await h.alloc(4)
-    # Even rejected allocations take priority over a simultaneously valid free.
+    await h.alloc(4, simultaneous=(EMPTY,) * (LANES + 1))
+    # Even OOM allocations take priority over a simultaneously valid free.
     await h.alloc(2, simultaneous=(0, 1))
     await h.alloc(3, simultaneous=(2, 3))
-    await h.alloc(9, simultaneous=(0,))
     assert h.oracle.live == {0, 1, 2, 3} and h.stats[:2] == (4, 0)
     await h.free((0, 1, 2, 3))
     assert set(await h.alloc(4, simultaneous=(EMPTY,))) == {0, 1, 2, 3}
@@ -561,9 +610,6 @@ def test_capacity_boundaries():
     await h.free((1,))
     await h.alloc(2)  # Atomic OOM, even with one reusable word.
     assert await h.alloc(1) == (1,)
-    # Spare count encodings must be rejected for frees as well as allocations.
-    for count in range(LANES + 1, 1 << len(h.dut.req_free)):
-      await h.free((EMPTY,) * count)
     assert h.oracle.live == {0, 1}
   simulate(2, tiny)
 
@@ -589,7 +635,7 @@ def test_randomized_ownership_and_reuse():
           count = rng.randint(1, min(LANES, len(h.oracle.live)))
           await h.free(rng.sample(sorted(h.oracle.live), count))
         else:
-          await h.alloc(rng.choice((1, 2, 3, 4, 6, 8, 9, 15)))
+          await h.alloc(rng.choice((1, 2, 3, 4, 6, 8)))
       while h.oracle.live:
         await h.free(rng.sample(sorted(h.oracle.live), min(LANES, len(h.oracle.live))))
       assert len(h.oracle.free) == h.oracle.bump
@@ -674,8 +720,8 @@ def test_competing_alloc_clients():
 
 
 def verify_arbitrary_bump_requests():
-  """Optional symbolic proof: single-edge bump/rejection for arbitrary counts."""
-  from amaranth import Assert, Cover, Mux, Signal
+  """Optional symbolic proof: single-edge bump/OOM for arbitrary valid counts."""
+  from amaranth import Assert, Assume, Cover, Mux, Signal
   from amaranth.asserts import AnySeq
 
   from ivga import Addr
@@ -687,23 +733,23 @@ def verify_arbitrary_bump_requests():
   request = AnySeq(len(dut.req_alloc))
   expected_empty = Signal(range(dut.capacity + 1))
 
-  expected_done, expected_oom, expected_bad = Signal(), Signal(), Signal()
+  expected_done, expected_oom = Signal(), Signal()
   expected_base = Signal(Addr)
   expected_count = Signal(range(LANES + 1))
   expected_peak = Signal(Addr)
-  bad = request > LANES
-  oom = ~bad & (request > dut.capacity - expected_empty)
+  oom = request > dut.capacity - expected_empty
   m.d.comb += [
+    Assume(request <= LANES),
     dut.req_alloc.eq(request), dut.req_free.eq(0), dut.free_addrs.eq(0),
     dut.stat_reset.eq(0), dut.heap.granted.eq(0), dut.heap.read_data.eq(POISON),
   ]
   m.d.sync += [
-    expected_done.eq(0), expected_oom.eq(0), expected_bad.eq(0),
+    expected_done.eq(0), expected_oom.eq(0),
     expected_peak.eq(Mux(expected_empty > expected_peak, expected_empty, expected_peak)),
   ]
   with m.If(request != 0):
-    with m.If(bad | oom):
-      m.d.sync += [expected_done.eq(1), expected_oom.eq(oom), expected_bad.eq(bad)]
+    with m.If(oom):
+      m.d.sync += [expected_done.eq(1), expected_oom.eq(1)]
     with m.Else():
       m.d.sync += [
         expected_done.eq(1), expected_base.eq(expected_empty), expected_count.eq(request),
@@ -713,17 +759,16 @@ def verify_arbitrary_bump_requests():
     Assert(dut.granted), Assert(dut.empty == expected_empty),
     Assert(dut.empty <= dut.capacity),
     Assert(dut.done == expected_done), Assert(dut.oom == expected_oom),
-    Assert(dut.bad_request == expected_bad),
     Assert(dut.free_head == ADDR_EMPTY), Assert(dut.free_count == 0),
     Assert(dut.stat_allocs == expected_empty), Assert(dut.stat_frees == 0),
     Assert(dut.stat_peak == expected_peak), Assert(~dut.heap.read), Assert(~dut.heap.write),
-    Cover(dut.done & dut.oom), Cover(dut.done & dut.bad_request), Cover(~dut.done),
+    Cover(dut.done & dut.oom), Cover(~dut.done),
   ]
   for lane in range(LANES):
-    with m.If(expected_done & ~expected_oom & ~expected_bad & (lane < expected_count)):
+    with m.If(expected_done & ~expected_oom & (lane < expected_count)):
       m.d.comb += Assert(dut.alloc_addrs[lane] == expected_base + lane)
   for count in (1, 2, 3, 4, 5, 6):
-    m.d.comb += Cover(dut.done & ~dut.oom & ~dut.bad_request & (expected_count == count))
+    m.d.comb += Cover(dut.done & ~dut.oom & (expected_count == count))
   verify.prove(depth=10)
 
 
@@ -732,7 +777,7 @@ def main():
   _ = parser.add_argument("--formal", action="store_true", help="also prove the symbolic bump invariant (Yosys/SMTBMC/Z3)")
   args = parser.parse_args()
   tests = [
-    test_minimum_schedule, test_minimum_cycle_timing,
+    test_minimum_schedule, test_minimum_cycle_timing, test_invalid_request_assertions,
     test_bump_and_atomic_oom, test_individual_word_reuse,
     test_mixed_reuse_and_atomic_oom, test_eight_word_batches_and_poisoned_inputs,
     test_free_acceptance_edges, test_allocation_priority, test_statistics_and_reset_priority,

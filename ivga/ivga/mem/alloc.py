@@ -21,7 +21,6 @@ class AllocPort(wiring.Signature):
       "granted": In(1),
       "done": In(1),
       "oom": In(1),
-      "bad_request": In(1),
       # stats
       "stat_allocs": In(Stat),
       "stat_frees": In(Stat),
@@ -44,7 +43,6 @@ class AllocPort(wiring.Signature):
       accepted.eq(False),
       addrs.eq(alloc.alloc_addrs),
       oom.eq(alloc.oom),
-      Assert(~alloc.bad_request, "Allocator rejected allocation request"),
     ]
     return addrs, oom
 
@@ -61,10 +59,7 @@ class AllocPort(wiring.Signature):
       Assert(accepted | (Value.cast(n_words) >= 1), "Free requires at least one word"),
     ]
     f.d.until += accepted & alloc.done
-    f.d.on_done += [
-      accepted.eq(False),
-      Assert(~alloc.bad_request, "Allocator rejected free request"),
-    ]
+    f.d.on_done += accepted.eq(False)
 
   @staticmethod
   def free_one(f: Flow, alloc, *, addr: ValueLike) -> None:
@@ -91,7 +86,6 @@ class Alloc(wiring.Component):
     m.d.sync += [
       alloc.done.eq(False),
       alloc.oom.eq(False),
-      alloc.bad_request.eq(False),
     ]
     expand(m, lambda f: program(f, alloc))
 
@@ -112,13 +106,9 @@ def program(f: Flow, alloc: Alloc):
 
   with f.If(alloc.req_alloc > 0):
     # allocate `req_alloc` words of memory
-    with f.If(alloc.req_alloc > LANES):
-      f.d.sync += [
-        alloc.done.eq(True),
-        alloc.bad_request.eq(True),
-      ]
-      yield
-    with f.Elif(alloc.req_alloc > available):
+    f.d.sync += Assert(alloc.req_alloc <= LANES, "Allocation request exceeds lane count")
+
+    with f.If(alloc.req_alloc > available):
       f.d.sync += [
         alloc.done.eq(True),
         alloc.oom.eq(True),
@@ -129,29 +119,24 @@ def program(f: Flow, alloc: Alloc):
 
   with f.Elif(alloc.req_free > 0):
     # free `req_free` words of memory
-    with f.If(alloc.req_free > LANES):
-      f.d.sync += [
-        alloc.done.eq(True),
-        alloc.bad_request.eq(True),
+    f.d.sync += Assert(alloc.req_free <= LANES, "Free request exceeds lane count")
+
+    remaining = f.capture(alloc.req_free)
+    addrs = f.capture(alloc.free_addrs)
+
+    with f.While(remaining != 0):
+      addr = addrs[(remaining - 1).as_unsigned()]
+
+      f.d.on_done += [
+        alloc.free_head.eq(addr),
+        alloc.free_count.eq(alloc.free_count + 1),
+        alloc.stat_frees.eq(alloc.stat_frees + 1),
+        remaining.eq(remaining - 1),
       ]
-      yield
-    with f.Else():
-      remaining = f.capture(alloc.req_free)
-      addrs = f.capture(alloc.free_addrs)
+      yield HeapPort.write(f, alloc.heap, addr=addr, write=alloc.free_head)
 
-      with f.While(remaining != 0):
-        addr = addrs[(remaining - 1).as_unsigned()]
-
-        f.d.on_done += [
-          alloc.free_head.eq(addr),
-          alloc.free_count.eq(alloc.free_count + 1),
-          alloc.stat_frees.eq(alloc.stat_frees + 1),
-          remaining.eq(remaining - 1),
-        ]
-        yield HeapPort.write(f, alloc.heap, addr=addr, write=alloc.free_head)
-
-      f.d.sync += alloc.done.eq(True)
-      yield
+    f.d.sync += alloc.done.eq(True)
+    yield
 
 def do_alloc(f: Flow, alloc: Alloc):
   # general idea: allocate from the free list if available,
