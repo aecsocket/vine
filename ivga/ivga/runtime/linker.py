@@ -1,7 +1,7 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
-from amflow import Flow, ValueLike, expand
+from amflow import Flow, expand
 from ivga.mem.alloc import AllocPort
 from ivga.mem.heap import HeapPort
 from ivga.mem.stack import StackPort
@@ -41,7 +41,7 @@ class Linker(wiring.Component):
 
   def elaborate(self, platform):
     m, linker = Module(), self
-    m.d.sync += self.done.eq(False)
+    m.d.sync += linker.done.eq(False)
     expand(m, lambda f: program(f, linker))
 
     with m.If(linker.stat_reset):
@@ -50,27 +50,21 @@ class Linker(wiring.Component):
     return m
 
 def program(f: Flow, linker: Linker):
+  f.d.comb += linker.granted.eq(True)
+
   with f.If(linker.req_link):
     a = f.capture(linker.req_a)
     b = f.capture(linker.req_b)
-    continues = f.capture(1)
 
-    with f.While(continues):
-      yield from do_link(f, linker, a, b, continues)
+    with f.While(True):
+      yield from do_link(f, linker, a, b)
 
-def do_link(f: Flow, linker: Linker, a, b, continues):
+def do_link(f: Flow, linker: Linker, a, b):
   with f.If(a.tag == Tag.WIRE):
-    with f.If(b.tag == Tag.WIRE):
-      # A and B are wires; follow B to the end
-      # then link A and the tail of B
-      yield from follow(f, linker, a, b, continues)
-    with f.Else():
-      # A is a wire, but B isn't, so we can go straight to connecting
-      yield from connect(f, linker, a, b, continues)
+    yield from link_wire(f, linker, a, b, next_a=a, next_b=b)
 
   with f.Elif(b.tag == Tag.WIRE):
-    # A must not be a wire; go straight to connecting
-    yield from connect(f, linker, a, b, continues)
+    yield from link_wire(f, linker, b, a, next_a=a, next_b=b)
 
   with f.Elif(
     ((a.tag == Tag.GRAFT) | (a.tag == Tag.ERASE))
@@ -84,9 +78,9 @@ def do_link(f: Flow, linker: Linker, a, b, continues):
     f.d.sync += [
       linker.done.eq(True),
       linker.stat_erase.eq(linker.stat_erase + 1),
-      continues.eq(False),
     ]
     yield
+    f.Break()
 
   with f.Elif(
     ((a.tag == Tag.EXT_VAL) | (a.tag == Tag.ERASE))
@@ -98,9 +92,9 @@ def do_link(f: Flow, linker: Linker, a, b, continues):
     f.d.sync += [
       linker.done.eq(True),
       linker.stat_erase.eq(linker.stat_erase + 1),
-      continues.eq(False),
     ]
     yield
+    f.Break()
 
   with f.Else():
     # all other work goes on the worklist
@@ -110,6 +104,7 @@ def do_link(f: Flow, linker: Linker, a, b, continues):
       f.d.comb += linker.fault.active_full.eq(True)
       f.d.sync += linker.done.eq(True)
       yield
+      f.Break()
     with f.Else():
       active_pair = Signal(Port2)
       f.d.comb += [
@@ -117,35 +112,48 @@ def do_link(f: Flow, linker: Linker, a, b, continues):
         active_pair.b.eq(b),
       ]
       yield StackPort.push(f, linker.active, data=active_pair)
+      f.Break()
 
-def follow(f: Flow, linker: Linker, p) -> ValueLike:
-  p = f.capture(p)
-
-  with f.While(p.tag == Tag.WIRE):
-    q = Port(yield HeapPort.read(f, addr=p.payload))
-
-    with f.If(q.tag != Tag.INVALID):
-      f.d.on_done += p.eq(q)
-      yield AllocPort.free_one(f, linker.alloc, addr=p.payload)
-
-  return p
-
-def connect(f: Flow, linker: Linker, a, b, continues):
-  with f.If(a == b):
+def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
+  other = yield from follow(f, linker, other)
+  with f.If(wire == other):
     # A's bits compose a wire, and B has the same bits,
     # so B is the same wire as A.
     # so we just free `A.payload`, and don't do any real connecting.
-    yield AllocPort.free_one(f, addr=a.payload)
+    f.d.on_done += linker.done.eq(True)
+    yield AllocPort.free_one(f, linker.alloc, addr=wire.payload)
+    f.Break()
   with f.Else():
     # swap_target(A as Wire, B)
     # => swap(&mut heap[A.payload], B)
-    previous = yield HeapPort.swap(f, addr=a.payload, write=b)
+    raw_previous = yield HeapPort.swap(f, linker.heap, addr=wire.payload, write=other)
+    previous = Port(raw_previous)
+
     with f.If(previous.tag == Tag.INVALID):
       # no node at A.payload's old slot, no work left
       f.d.sync += linker.done.eq(True)
       yield
+      f.Break()
     with f.Else():
       # free A.payload and `link(previous, b)`
       # in this cycle we only free A.payload
-      yield AllocPort.free_one(f, addr=a.payload)
-      # TODO link(previous, b)
+      f.d.on_done += [
+        next_a.eq(previous),
+        next_b.eq(other),
+      ]
+      yield AllocPort.free_one(f, linker.alloc, addr=wire.payload)
+
+def follow(f: Flow, linker: Linker, p):
+  p = f.capture(p)
+
+  with f.While(p.tag == Tag.WIRE):
+    raw_q = yield HeapPort.read(f, linker.heap, addr=p.payload)
+    q = Port(raw_q)
+
+    with f.If(q.tag == Tag.INVALID):
+      f.Break()
+    with f.Else():
+      f.d.on_done += p.eq(q)
+      yield AllocPort.free_one(f, linker.alloc, addr=p.payload)
+
+  return p

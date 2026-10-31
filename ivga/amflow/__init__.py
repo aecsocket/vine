@@ -27,6 +27,7 @@ class Flow:
     self.d = FlowDomains()
     self.after_step: list[Capture] = []
     self.captures: list[Capture] = []
+    self.loop_depth = 0
 
   def capture(self, value: ValueLike, *, after_step: bool = False) -> Capture:
     """Capture on entry here, or in the continuation of the pending step."""
@@ -52,6 +53,13 @@ class Flow:
 
   def While(self, cond: ValueLike) -> FlowWhile:
     return FlowWhile(self, cond)
+
+  def Break(self) -> None:
+    """Exit the innermost While without introducing a clock boundary."""
+    if self.loop_depth == 0:
+      raise ValueError("`Break` requires an enclosing `While`")
+    _flush_effects(self)
+    self.block.items.append(Break())
 
 
 class FlowDomains:
@@ -96,7 +104,7 @@ class Block:
   """
 
   def __init__(self):
-    self.items: list[Assigns | Branch | Loop | Capture] = []
+    self.items: list[Assigns | Branch | Loop | Break | Capture] = []
 
 class Assigns:
   """List of assignments to add to `m.d` during elaboration of a state."""
@@ -146,6 +154,10 @@ class Loop:
   def __init__(self, cond: Value):
     self.cond = cond
     self.body = Block()
+
+class Break:
+  """A zero-time exit to the innermost loop's continuation."""
+
 
 # control flow
 
@@ -252,6 +264,7 @@ class FlowWhile:
 
     # future accumulations go in this body
     self.flow.block = self.loop.body
+    self.flow.loop_depth += 1
     return self
 
   def __exit__(self, exc_type, exc, traceback):
@@ -260,6 +273,7 @@ class FlowWhile:
         _flush_effects(self.flow)
     finally:
       self.flow.block = self.parent
+      self.flow.loop_depth -= 1
     return False
 
 
@@ -392,7 +406,7 @@ def expand(
   # None is the end of the program, which loops back to its entry.
   type Target = Action | Decision | Capturing | Effecting | None
 
-  def lower(block: Block, after: Target) -> Target:
+  def lower(block: Block, after: Target, break_to: Target = None) -> Target:
     entry = after
     for item in reversed(block.items):
       if isinstance(item, Effects):
@@ -404,8 +418,10 @@ def expand(
       elif isinstance(item, Loop):
         # The body's continuation is its own condition, not the following item.
         loop = Decision([], entry)
-        loop.arms.append((item.cond, lower(item.body, loop)))
+        loop.arms.append((item.cond, lower(item.body, loop, break_to=entry)))
         entry = loop
+      elif isinstance(item, Break):
+        entry = break_to
       else:
         effects = branch_effects(item)
         if effects is not None:
@@ -413,8 +429,8 @@ def expand(
           if effects.comb or effects.sync or effects.on_done or not _always(effects.until):
             entry = Effecting(effects, entry)
         else:
-          otherwise = lower(item.or_else, entry) if item.or_else is not None else entry
-          arms = [(cond, lower(body, entry)) for cond, body in item.arms]
+          otherwise = lower(item.or_else, entry, break_to) if item.or_else is not None else entry
+          arms = [(cond, lower(body, entry, break_to)) for cond, body in item.arms]
           if all(target is otherwise for _, target in arms):
             entry = otherwise
           else:

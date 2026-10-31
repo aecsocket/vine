@@ -1,4 +1,5 @@
 from amaranth import *
+from amaranth.lib import wiring
 from amaranth.sim import Simulator
 from ivga.mem.alloc import Alloc
 from ivga.mem.heap import Heap
@@ -7,7 +8,8 @@ PERIOD = 1e-6
 
 m = Module()
 heap = m.submodules.heap = Heap()
-dut = m.submodules.alloc = Alloc(8, heap)
+dut = m.submodules.alloc = Alloc(8)
+wiring.connect(m, dut.heap, heap.control)
 
 async def testbench_foo(ctx):
   await ctx.tick().repeat(10)

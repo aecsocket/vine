@@ -73,13 +73,13 @@ class AllocPort(wiring.Signature):
 
 class Alloc(wiring.Component):
   control: In(AllocPort())
+  heap: Out(HeapPort())
 
-  def __init__(self, capacity: int, heap):
+  def __init__(self, capacity: int):
     assert 0 < capacity <= ADDR_MAX
     assert capacity % 2 == 0
 
     self.capacity = capacity
-    self.heap = heap
     self.empty = Signal(range(capacity + 1))
     self.free_head = Signal(Addr, init=ADDR_EMPTY)
     self.free_count = Signal(range(capacity + 1))

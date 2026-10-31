@@ -147,6 +147,14 @@ the loop condition; it does not rerun Python to construct each iteration.
 - Test the condition before starting an iteration.
 - Fuse that test with the first body action.
 - On a false condition, fall through into the continuation without a condition-only cycle.
+- `f.Break()` exits the nearest enclosing `f.While()` without a clock boundary. It is a plain
+  recording call, not something to yield. Use `with f.If(...)` to make it conditional.
+- `Break` flushes preceding effects at their source position. Lowering replaces the remainder of
+  that path with the loop's continuation, carrying pending work to the next reached yield. Code
+  after a taken break in that loop body is unreachable in hardware, even though Python still
+  executes it while recording the program. A branch containing a break is not effects-only.
+- Calling `Break` outside a loop is an elaboration error. Nested loops pass their own exit
+  continuation during lowering, so an inner break cannot accidentally exit the outer loop.
 - Once an iteration starts, finish its body even if its original condition changes while an
   action stalls.
 - Plain no-action polling paths can idle at their control-flow node. A cycle carrying unresolved

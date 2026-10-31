@@ -40,7 +40,6 @@ from amaranth.sim import Simulator
 
 from ivga import ADDR_MAX
 from ivga.mem.alloc import ADDR_EMPTY, LANES, Alloc, AllocArbiter
-from ivga.mem.heap import HeapPort
 
 EMPTY = ADDR_EMPTY.value
 POISON = 0xDEAD_BEEF_CAFE_F00D
@@ -351,7 +350,7 @@ class Harness:
 
 
 def simulate(capacity, scenario, *, grants=(True,)):
-  dut = Alloc(capacity, HeapPort().create())
+  dut = Alloc(capacity)
   sim = Simulator(dut)
   sim.add_clock(PERIOD)
 
@@ -546,7 +545,7 @@ def test_capacity_boundaries():
     try:
       for capacity in (-2, 0, 1, 3, ADDR_MAX, ADDR_MAX + 1):
         try:
-          rejected = Alloc(capacity, HeapPort().create())
+          rejected = Alloc(capacity)
           del rejected
         except (AssertionError, ValueError):
           pass
@@ -606,7 +605,7 @@ def test_competing_alloc_clients():
   from amaranth.lib import wiring
 
   m = Module()
-  dut = m.submodules.alloc = Alloc(16, HeapPort().create())
+  dut = m.submodules.alloc = Alloc(16)
   arb = m.submodules.arb = AllocArbiter(2)
   wiring.connect(m, arb.real, dut.control)
   sim = Simulator(m)
@@ -682,7 +681,7 @@ def verify_arbitrary_bump_requests():
   from ivga import Addr
   from ivga.verify import Verify
 
-  dut = Alloc(capacity=6, heap=HeapPort().create())
+  dut = Alloc(capacity=6)
   verify = Verify(dut, cycles=9)
   m = verify.m
   request = AnySeq(len(dut.req_alloc))

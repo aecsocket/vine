@@ -26,7 +26,7 @@ async def testbench_foo(ctx):
   ctx.set(heap.memory.data[0], Port.invalid())
   ctx.set(heap.memory.data[1], Port.wire(2))
   ctx.set(heap.memory.data[2], Port.eraser())
-  ctx.set(alloc.empty, 4) # Reserve two aligned pairs for slots 0..3.
+  ctx.set(alloc.empty, 4) # Reserve slots 0..3.
   ctx.set(dut.req_link, True)
   ctx.set(dut.req_a, Port.wire(0))
   ctx.set(dut.req_b, Port.wire(1))
@@ -40,10 +40,17 @@ async def testbench_foo(ctx):
   else:
     raise AssertionError("link did not complete within 20 cycles")
   assert ctx.get(heap.memory.data[0]) == Port.eraser().as_value().value
-  assert ctx.get(alloc.free_count) == 0
-  assert ctx.get(alloc.free_head) == ADDR_EMPTY.value
-  assert ctx.get(alloc.half_free) == 0b11
+  # Following 1 -> 2 -> Erase frees slots 1 then 2: 2 -> 1 -> EMPTY.
+  assert ctx.get(alloc.free_count) == 2
+  assert ctx.get(alloc.free_head) == 2
+  assert ctx.get(heap.memory.data[2]) == 1
+  assert ctx.get(heap.memory.data[1]) == ADDR_EMPTY.value
+  assert ctx.get(alloc.empty) == 4
   assert ctx.get(alloc.stat_frees) == 2
+
+  await ctx.tick()
+  assert not ctx.get(dut.done)
+  assert ctx.get(dut.granted)
 
 sim = Simulator(m)
 sim.add_clock(PERIOD)
