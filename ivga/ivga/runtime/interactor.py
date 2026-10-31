@@ -128,7 +128,7 @@ def annihilate(f: Flow, interactor: Interactor, a, b):
   yield
 
 def commute(f: Flow, interactor: Interactor, a, b):
-  addrs, oom = yield AllocPort.alloc(f, n_words=4)
+  addrs, oom = yield AllocPort.alloc(f, n_pairs=4)
   a1, a2, b1, b2 = addrs[0], addrs[1], addrs[2], addrs[3]
   a01, a02 = Port.aux(f, a)
   b01, b02 = Port.aux(b)

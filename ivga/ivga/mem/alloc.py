@@ -8,16 +8,23 @@ from ivga.util.arbiter import make_arbiter_type
 
 from ivga import ADDR_MAX, Addr, Stat, flatten
 
-LANES = 8
+ALLOC_LANES = 4
+"""How many pairs (2 words) can be allocated at once."""
+
+FREE_LANES = 2
+"""How many single words can be freed at once."""
+
 ADDR_EMPTY = Const(ADDR_MAX, Addr)
 
 class AllocPort(wiring.Signature):
   def __init__(self):
     super().__init__({
-      "req_alloc": Out(range(LANES + 1)),
-      "req_free": Out(range(LANES + 1)),
-      "free_addrs": Out(ArrayLayout(Addr, LANES)),
-      "alloc_addrs": In(ArrayLayout(Addr, LANES)),
+      "req_alloc": Out(range(ALLOC_LANES + 1)),
+      "alloc_bases": In(ArrayLayout(Addr, ALLOC_LANES)),
+
+      "req_free": Out(range(FREE_LANES + 1)),
+      "free_addrs": Out(ArrayLayout(Addr, FREE_LANES)),
+
       "granted": In(1),
       "done": In(1),
       "oom": In(1),
@@ -29,29 +36,29 @@ class AllocPort(wiring.Signature):
     })
 
   @staticmethod
-  def alloc(f: Flow, alloc, *, n_words: ValueLike) -> tuple[Signal, Signal]:
+  def alloc(f: Flow, alloc, *, n_pairs: ValueLike) -> tuple[Signal, Signal]:
     accepted = Signal()
-    addrs, oom = Signal.like(alloc.alloc_addrs), Signal.like(alloc.oom)
+    bases, oom = Signal.like(alloc.alloc_bases), Signal.like(alloc.oom)
 
-    f.d.comb += alloc.req_alloc.eq(Mux(accepted, False, n_words))
+    f.d.comb += alloc.req_alloc.eq(Mux(accepted, 0, n_pairs))
     f.d.sync += [
       accepted.eq(accepted | alloc.granted),
-      Assert(accepted | (Value.cast(n_words) >= 1), "Allocation requires at least one word"),
+      Assert(accepted | (Value.cast(n_pairs) >= 1), "Allocation requires at least one pair"),
     ]
     f.d.until += accepted & alloc.done
     f.d.on_done += [
       accepted.eq(False),
-      addrs.eq(alloc.alloc_addrs),
+      bases.eq(alloc.alloc_bases),
       oom.eq(alloc.oom),
     ]
-    return addrs, oom
+    return bases, oom
 
   @staticmethod
-  def free(f: Flow, alloc, *, n_words: ValueLike, addrs: ValueLike) -> None:
+  def free_all(f: Flow, alloc, *, n_words: ValueLike, addrs: ValueLike) -> None:
     accepted = Signal()
 
     f.d.comb += [
-      alloc.req_free.eq(Mux(accepted, False, n_words)),
+      alloc.req_free.eq(Mux(accepted, 0, n_words)),
       alloc.free_addrs.eq(addrs),
     ]
     f.d.sync += [
@@ -62,8 +69,8 @@ class AllocPort(wiring.Signature):
     f.d.on_done += accepted.eq(False)
 
   @staticmethod
-  def free_one(f: Flow, alloc, *, addr: ValueLike) -> None:
-    AllocPort.free(f, alloc, n_words=1, addrs=addr)
+  def free(f: Flow, alloc, *, addr: ValueLike) -> None:
+    AllocPort.free_all(f, alloc, n_words=1, addrs=addr)
 
 
 class Alloc(wiring.Component):
@@ -105,10 +112,10 @@ def program(f: Flow, alloc: Alloc):
   available = alloc.capacity - alloc.empty + alloc.free_count
 
   with f.If(alloc.req_alloc > 0):
-    # allocate `req_alloc` words of memory
-    f.d.sync += Assert(alloc.req_alloc <= LANES, "Allocation request exceeds lane count")
+    # allocate `req_alloc` word-pairs of memory
+    f.d.sync += Assert(alloc.req_alloc <= ALLOC_LANES, "Allocation request exceeds lane count")
 
-    with f.If(alloc.req_alloc > available):
+    with f.If((alloc.req_alloc * 2) > available):
       f.d.sync += [
         alloc.done.eq(True),
         alloc.oom.eq(True),
@@ -119,62 +126,67 @@ def program(f: Flow, alloc: Alloc):
 
   with f.Elif(alloc.req_free > 0):
     # free `req_free` words of memory
-    f.d.sync += Assert(alloc.req_free <= LANES, "Free request exceeds lane count")
-
-    remaining = f.capture(alloc.req_free)
-    addrs = f.capture(alloc.free_addrs)
-
-    with f.While(remaining != 0):
-      addr = addrs[(remaining - 1).as_unsigned()]
-
-      f.d.on_done += [
-        alloc.free_head.eq(addr),
-        alloc.free_count.eq(alloc.free_count + 1),
-        alloc.stat_frees.eq(alloc.stat_frees + 1),
-        remaining.eq(remaining - 1),
-      ]
-      yield HeapPort.write(f, alloc.heap, addr=addr, write=alloc.free_head)
-
-    f.d.sync += alloc.done.eq(True)
-    yield
+    f.d.sync += Assert(alloc.req_free <= FREE_LANES, "Free request exceeds lane count")
+    yield from free(f, alloc)
 
 def do_alloc(f: Flow, alloc: Alloc):
   # general idea: allocate from the free list if available,
   # else bump allocate.
-  req_alloc = f.capture(alloc.req_alloc)
+  pairs_to_alloc = f.capture(alloc.req_alloc)
 
-  with f.While((req_alloc != 0) & (alloc.free_head != ADDR_EMPTY)):
+  with f.While((pairs_to_alloc != 0) & (alloc.free_head != ADDR_EMPTY)):
     # prioritize taking from the free list
-    top_idx = (req_alloc - 1).as_unsigned()
-    f.d.sync += alloc.alloc_addrs[top_idx].eq(alloc.free_head)
+    # one free list entry represents *two* allocations
+    # (since we always allocate in multiples of 2):
+    # - `free_head` is the 1st allocated word
+    # - `free_head ^ 1` is the 2nd allocated word
+    #   the caller is responsible for computing this
+    top_idx = (pairs_to_alloc - 1).as_unsigned()
+    f.d.sync += alloc.alloc_bases[top_idx].eq(alloc.free_head)
     next_free_head = yield HeapPort.read(f, alloc.heap, addr=alloc.free_head)
 
     f.d.on_done += [
-      req_alloc.eq(req_alloc - 1),
-      alloc.free_count.eq(alloc.free_count - 1),
-      alloc.stat_allocs.eq(alloc.stat_allocs + 1),
+      pairs_to_alloc.eq(pairs_to_alloc - 1),
+      alloc.free_count.eq(alloc.free_count - 2),
+      alloc.stat_allocs.eq(alloc.stat_allocs + 2),
     ]
     f.d.sync += alloc.free_head.eq(next_free_head)
     yield
 
-  with f.If(req_alloc != 0):
+  with f.If(pairs_to_alloc != 0):
     # consumed the whole free list but we still haven't allocated enough;
     # take from the bump allocator.
     # we've already asserted that we have enough free capacity.
-    for lane in range(LANES):
-      lane_alloc = alloc.alloc_addrs[lane]
-      f.d.sync += lane_alloc.eq(
-        Mux(lane < req_alloc, alloc.empty + lane, lane_alloc)
+    for lane in range(ALLOC_LANES):
+      lane_base = alloc.alloc_bases[lane]
+      f.d.sync += lane_base.eq(
+        Mux(lane < pairs_to_alloc, alloc.empty + lane * 2, lane_base)
       )
-    yield
+    f.d.sync += [
+      alloc.empty.eq(alloc.empty + pairs_to_alloc * 2),
+      alloc.stat_allocs.eq(alloc.stat_allocs + pairs_to_alloc * 2),
+    ]
 
-  f.d.sync += [
-    alloc.done.eq(True),
-    alloc.empty.eq(alloc.empty + req_alloc),
-    alloc.stat_allocs.eq(alloc.stat_allocs + req_alloc),
-  ]
+  f.d.sync += alloc.done.eq(True)
   yield
 
+def free(f: Flow, alloc: Alloc):
+  remaining = f.capture(alloc.req_free)
+  addrs = f.capture(alloc.free_addrs)
+
+  with f.While(remaining != 0):
+    addr = addrs[(remaining - 1).as_unsigned()]
+
+    f.d.on_done += [
+      alloc.free_head.eq(addr),
+      alloc.free_count.eq(alloc.free_count + 1),
+      alloc.stat_frees.eq(alloc.stat_frees + 1),
+      remaining.eq(remaining - 1),
+    ]
+    yield HeapPort.write(f, alloc.heap, addr=addr, write=alloc.free_head)
+
+  f.d.sync += alloc.done.eq(True)
+  yield
 
 AllocArbiter = make_arbiter_type(
   AllocPort,
