@@ -42,10 +42,10 @@ def do_something(f: Flow, dummy: Dummy):
   _ = sync(f, dummy.started.eq(True))
   a = yield memory_read(f, dummy.memory_read, addr=6)
   b = yield memory_read(f, dummy.memory_read, addr=7)
-  # with f.If(a == b):
-  yield memory_write(f, dummy.memory_write, addr=8, data=a + b)
-  # with f.Else():
-    # yield memory_write(f, dummy.memory_write, addr=8, data=b)
+  with f.If(a == b):
+    yield memory_write(f, dummy.memory_write, addr=8, data=a + b)
+  with f.Else():
+    yield memory_write(f, dummy.memory_write, addr=8, data=b)
 
   _ = sync(f, dummy.done.eq(True))
   yield tick(f)
