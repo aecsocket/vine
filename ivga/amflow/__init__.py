@@ -3,12 +3,13 @@ from enum import Enum
 from typing import Any
 
 from amaranth import *
-from amaranth import ValueCastable
+from amaranth import ShapeCastable, ValueCastable
 from amaranth.hdl._ast import Statement
 
 __all__ = [
   "Flow",
   "ValueLike",
+  "capture",
   "comb",
   "expand",
   "step",
@@ -28,6 +29,7 @@ class Flow:
     self.comb: list[Statement] = []
     self.sync: list[Statement] = []
     self.on_done: list[Statement] = []
+    self.after_step: list[Capture] = []
 
   def accumulate(
     self,
@@ -44,7 +46,20 @@ class Flow:
     comb, self.comb = self.comb, []
     sync, self.sync = self.sync, []
     on_done, self.on_done = self.on_done, []
+    after_step, self.after_step = self.after_step, []
     self.block.items.append(Assigns(comb, sync, on_done, step.until))
+    self.block.items.extend(after_step)
+
+  def capture(self, value: ValueLike, *, after_step: bool = False) -> Capture:
+    """Capture on entry here, or in the continuation of the pending step."""
+    captured = Capture(value)
+    if after_step:
+      self.after_step.append(captured)
+    else:
+      self.block.items.append(captured)
+    self.m.d.comb += captured.bypass.eq(False)
+    return captured
+
 
   def If(self, cond: Value) -> FlowIf:
     return FlowIf(self, cond)
@@ -63,7 +78,7 @@ class Step:
   may transition into a new FSM state and wait a clock cycle.
   """
 
-  def __init__(self, *, until: Value, out: Value | None):
+  def __init__(self, *, until: Value, out: Value | ValueCastable | None):
     self.until = until
     self.out = out
 
@@ -73,7 +88,7 @@ class Block:
   """
 
   def __init__(self):
-    self.items: list[Assigns | Branch | Loop] = []
+    self.items: list[Assigns | Branch | Loop | Capture] = []
 
 class Assigns:
   """List of assignments to add to `m.d` during elaboration of a state."""
@@ -195,6 +210,17 @@ class FlowWhile:
     self.flow.block = self.parent
     return False
 
+class Capture:
+  """Forward the source on entry, then read from its captured, writable storage."""
+
+  def __init__(self, value: ValueLike):
+    self.source = value
+    self.reg = Signal.like(value)
+    self.bypass = Signal()
+    forwarded = Mux(self.bypass, value, self.reg)
+    shape = self.reg.shape()
+    self.value = shape(forwarded) if isinstance(shape, ShapeCastable) else forwarded
+
 # expansion
 
 def expand(
@@ -224,6 +250,8 @@ def expand(
         raise ValueError("Uncommitted `sync` effects; did you forget to `yield`?")
       if flow.on_done:
         raise ValueError("Uncommitted `on_done` effects; did you forget to `yield`?")
+      if flow.after_step:
+        raise ValueError("Uncommitted `after_step` captures; did you forget to `yield`?")
       break
 
   class Action:
@@ -240,14 +268,21 @@ def expand(
       self.arms = arms
       self.otherwise = otherwise
 
+  class Capturing:
+    def __init__(self, captured: Capture, following: Target):
+      self.captured = captured
+      self.following = following
+
   # None is the end of the program, which loops back to its entry.
-  type Target = Action | Decision | None
+  type Target = Action | Decision | Capturing | None
 
   def lower(block: Block, after: Target) -> Target:
     entry = after
     for item in reversed(block.items):
       if isinstance(item, Assigns):
         entry = Action(item, entry)
+      elif isinstance(item, Capture):
+        entry = Capturing(item, entry)
       elif isinstance(item, Loop):
         # The body's continuation is its own condition, not the following item.
         loop = Decision([], entry)
@@ -267,8 +302,8 @@ def expand(
   if entry is None:
     return
 
-  states: list[Action | Decision] = []
-  names: dict[Action | Decision, str] = {}
+  states: list[Action | Decision | Capturing] = []
+  names: dict[Action | Decision | Capturing, str] = {}
 
   def schedule(target: Target) -> str:
     if target is None:
@@ -279,22 +314,32 @@ def expand(
       states.append(target)
     return names[target]
 
-  def emit(target: Target, decisions: tuple[Decision, ...] = ()) -> None:
+  def emit(target: Target, path: tuple[Decision | Capturing, ...] = ()) -> None:
     if target is None:
       target = entry
     assert target is not None
 
-    if isinstance(target, Decision):
-      if target in decisions:
-        # A path with no yielded action waits here instead of restarting the flow.
+    if isinstance(target, (Decision, Capturing)):
+      if target in path:
+        # Close a path with no yielded action at the repeated control-flow node.
         m.next = schedule(target)
         return
-      decisions = (*decisions, target)
+      path = (*path, target)
+
+    if isinstance(target, Capturing):
+      captured = target.captured
+      m.d.comb += captured.bypass.eq(True)
+      m.d.sync += captured.reg.eq(captured.source)
+      # Capture at the first edge, even if the following action stalls.
+      emit(target.following, path)
+      return
+
+    if isinstance(target, Decision):
       for i, (cond, arm) in enumerate(target.arms):
         with m.If(cond) if i == 0 else m.Elif(cond):
-          emit(arm, decisions)
+          emit(arm, path)
       with m.Else():
-        emit(target.otherwise, decisions)
+        emit(target.otherwise, path)
       return
 
     assigns = target.assigns
@@ -323,6 +368,9 @@ def expand(
 
 # helpers / higher-level API
 
+def capture(f: Flow, value: ValueLike, *, after_step: bool = False) -> Capture:
+  return f.capture(value, after_step=after_step)
+
 def step(
   f: Flow,
   *,
@@ -330,7 +378,7 @@ def step(
   sync: Statement | Iterable[Statement] = (),
   until: Value | None = None,
   on_done: Statement | Iterable[Statement] = (),
-  out: Value | None = None,
+  out: Value | ValueCastable | None = None,
 ) -> Step:
   f.accumulate(
     comb=[comb] if isinstance(comb, Statement) else comb,
