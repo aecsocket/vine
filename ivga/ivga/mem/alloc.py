@@ -3,9 +3,9 @@ from amaranth.lib import wiring
 from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
 
-from amflow import Flow, Sync, sync
+from amflow import Flow, Sync, expand, step, sync
 from ivga import ADDR_MAX, Addr, Stat, flatten
-from ivga.mem.heap import HeapPort, HeapWrite
+from ivga.mem.heap import HeapPort, HeapWrite, heap_write
 
 LANES = 8
 ADDR_EMPTY = Const(ADDR_MAX, Addr)
@@ -51,18 +51,19 @@ class Alloc(wiring.Component):
       self.bad_request.eq(False),
     ]
 
+    expand(m, lambda f: program(f, self))
 
-def idle(f: Flow, alloc: Alloc):
+def program(f: Flow, alloc: Alloc):
   available = alloc.capacity - alloc.empty + alloc.free_count
 
   with f.If(alloc.req_alloc > 0):
     with f.If(alloc.req_alloc > LANES):
-      yield sync([
+      yield sync(f, [
         alloc.done.eq(True),
         alloc.bad_request.eq(True),
       ])
     with f.Elif(alloc.req_alloc > available):
-      yield sync([
+      yield sync(f, [
         alloc.done.eq(True),
         alloc.oom.eq(True),
       ])
@@ -70,10 +71,11 @@ def idle(f: Flow, alloc: Alloc):
       do_alloc(f, alloc)
 
   with f.Elif(alloc.req_free > 0):
+    # free `req_free` addresses
     remaining = Signal(range(LANES + 1))
     addrs = Signal(ArrayLayout(Addr, LANES))
 
-    yield Sync("free_start", [
+    _ = sync(f, [
       remaining.eq(alloc.req_free),
       addrs.eq(alloc.free_addrs),
     ])
@@ -81,22 +83,15 @@ def idle(f: Flow, alloc: Alloc):
     with f.While(remaining != 0):
       addr = addrs[remaining - 1]
 
-      yield HeapWrite(
-        "free_write_next",
-        alloc.heap,
-        addr=addr,
-        data=alloc.free_head,
-      )
-      yield Sync("set_free_head", [
+      _ = step(f, on_done=[
         alloc.free_head.eq(addr),
         alloc.free_count.eq(alloc.free_count + 1),
         alloc.stat_frees.eq(alloc.stat_frees + 1),
         remaining.eq(remaining - 1),
       ])
+      yield heap_write(f, alloc.heap, addr=addr, data=alloc.free_head)
 
-    yield Sync("free_done", alloc.done.eq(True))
-
-
+    yield sync(alloc.done.eq(True))
 
 def do_alloc(f: Flow, alloc: Alloc):
   # general idea: allocate from the free list if available,

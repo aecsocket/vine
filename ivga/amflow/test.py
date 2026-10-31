@@ -4,7 +4,7 @@ from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
 from amaranth.sim import Simulator
 
-from amflow import Flow, expand, sync, tick
+from amflow import Flow, expand, step, sync, tick
 from amflow.memory import memory_read, memory_write
 
 
@@ -47,12 +47,19 @@ def do_something(f: Flow, dummy: Dummy):
   with f.Else():
     yield memory_write(f, dummy.memory_write, addr=8, data=b)
 
+  counter = Signal(range(5))
+  yield sync(f, counter.eq(4))
+  with f.While(counter != 0):
+    x = yield memory_read(f, dummy.memory_read, addr=2)
+    _ = step(f, on_done=counter.eq(counter - 11))
+    yield memory_write(f, dummy.memory_write, addr=2, data=x + 1)
+
   _ = sync(f, dummy.done.eq(True))
   yield tick(f)
 
 
 async def dummy_testbench(ctx):
-  await ctx.tick().repeat(10)
+  await ctx.tick().repeat(30)
 
 
 dut = Dummy()
