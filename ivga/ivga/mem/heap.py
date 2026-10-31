@@ -2,7 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
-from amflow import Flow, ValueLike, step
+from amflow import Flow, ValueLike
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import Addr, Word, flatten
@@ -81,37 +81,28 @@ HeapArbiter = make_arbiter_type(
 
 def heap_read(f: Flow, heap, *, addr: ValueLike) -> ValueLike:
   result = f.capture(heap.read_data, after_step=True)
-  step(
-    f,
-    comb=[
-      heap.read.eq(True),
-      heap.addr.eq(addr),
-    ],
-    until=heap.granted
-  )
+  f.d.comb += [
+    heap.read.eq(True),
+    heap.addr.eq(addr),
+  ]
+  f.d.until += heap.granted
   return result
 
 def heap_write(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> None:
-  step(
-    f,
-    comb=[
-      heap.write.eq(True),
-      heap.addr.eq(addr),
-      heap.write_data.eq(write),
-    ],
-    until=heap.granted,
-  )
+  f.d.comb += [
+    heap.write.eq(True),
+    heap.addr.eq(addr),
+    heap.write_data.eq(write),
+  ]
+  f.d.until += heap.granted
 
 def heap_swap(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> ValueLike:
   result = f.capture(heap.read_data, after_step=True)
-  step(
-    f,
-    comb=[
-      heap.read.eq(True),
-      heap.write.eq(True),
-      heap.addr.eq(addr),
-      heap.write_data.eq(write),
-    ],
-    until=heap.granted,
-  )
+  f.d.comb += [
+    heap.read.eq(True),
+    heap.write.eq(True),
+    heap.addr.eq(addr),
+    heap.write_data.eq(write),
+  ]
+  f.d.until += heap.granted
   return result

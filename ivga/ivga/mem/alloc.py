@@ -2,8 +2,8 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
-from amflow import Flow, expand, sync, tick
-from ivga.mem.heap import HeapPort, heap_read, heap_swap, heap_write
+from amflow import Flow, expand
+from ivga.mem.heap import HeapPort, heap_read, heap_write
 from ivga.util.arbiter import make_arbiter_type
 
 from ivga import ADDR_MAX, Addr, Stat, flatten
@@ -61,25 +61,28 @@ def program(f: Flow, alloc: Alloc):
   with f.If(alloc.req_alloc > 0):
     # allocate `req_alloc` words of memory
     with f.If(alloc.req_alloc > LANES):
-      yield sync(f, [
+      f.d.sync += [
         alloc.done.eq(True),
         alloc.bad_request.eq(True),
-      ])
+      ]
+      yield
     with f.Elif(alloc.req_alloc > available):
-      yield sync(f, [
+      f.d.sync += [
         alloc.done.eq(True),
         alloc.oom.eq(True),
-      ])
+      ]
+      yield
     with f.Else():
       yield from do_alloc(f, alloc)
 
   with f.Elif(alloc.req_free > 0):
     # free `req_free` words of memory
     with f.If(alloc.req_free > LANES):
-      yield sync(f, [
+      f.d.sync += [
         alloc.done.eq(True),
         alloc.bad_request.eq(True),
-      ])
+      ]
+      yield
     with f.Else():
       remaining = f.capture(alloc.req_free)
       addrs = f.capture(alloc.free_addrs)
@@ -87,15 +90,16 @@ def program(f: Flow, alloc: Alloc):
       with f.While(remaining != 0):
         addr = addrs[(remaining - 1).as_unsigned()]
 
-        f.accumulate(on_done=[
+        f.d.on_done += [
           alloc.free_head.eq(addr),
           alloc.free_count.eq(alloc.free_count + 1),
           alloc.stat_frees.eq(alloc.stat_frees + 1),
           remaining.eq(remaining - 1),
-        ])
+        ]
         yield heap_write(f, alloc.heap, addr=addr, write=alloc.free_head)
 
-      yield sync(f, alloc.done.eq(True))
+      f.d.sync += alloc.done.eq(True)
+      yield
 
 def do_alloc(f: Flow, alloc: Alloc):
   # general idea: allocate from the free list if available,
@@ -105,12 +109,13 @@ def do_alloc(f: Flow, alloc: Alloc):
   with f.While((req_alloc != 0) & (alloc.free_head != ADDR_EMPTY)):
     # prioritize taking from the free list
     next_free_head = yield heap_read(f, alloc.heap, addr=alloc.free_head)
-    f.accumulate(on_done=[
+    f.d.on_done += [
       req_alloc.eq(req_alloc - 1),
       alloc.free_count.eq(alloc.free_count - 1),
       alloc.stat_allocs.eq(alloc.stat_allocs + 1),
-    ])
-    yield sync(f, alloc.free_head.eq(next_free_head))
+    ]
+    f.d.sync += alloc.free_head.eq(next_free_head)
+    yield
 
   with f.If(req_alloc != 0):
     # consumed the whole free list but we still haven't allocated enough;
@@ -118,14 +123,15 @@ def do_alloc(f: Flow, alloc: Alloc):
     # we've already asserted that we have enough free capacity.
     for lane in range(LANES):
       with f.If(lane < req_alloc):
-        sync(f, alloc.alloc_addrs[lane].eq(alloc.empty + lane))
-    yield tick(f)
+        f.d.sync += alloc.alloc_addrs[lane].eq(alloc.empty + lane)
+    yield
 
-  yield sync(f, [
+  f.d.sync += [
     alloc.done.eq(True),
     alloc.empty.eq(alloc.empty + req_alloc),
     alloc.stat_allocs.eq(alloc.stat_allocs + req_alloc),
-  ])
+  ]
+  yield
 
 
 AllocArbiter = make_arbiter_type(

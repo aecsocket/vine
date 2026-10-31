@@ -40,9 +40,11 @@ def program(f: amflow.Flow):
     counter = f.capture(count_down_from)
     
     with f.While(counter > 0):
-      yield sync(f, counter.eq(counter - 1))
+      f.d.sync += counter.eq(counter - 1)
+      yield
 
-    yield sync(f, done.eq(True))
+    f.d.sync += done.eq(True)
+    yield
 
 # `amflow.expand` expands to the same
 # state machine that we've written above
@@ -59,9 +61,11 @@ def program(f: Flow):
   ]
   
   with f.If(some_value > 0):
-    yield sync(f, some_other_value.eq(True))
+    f.d.sync += some_other_value.eq(True)
+    yield
   with f.Else():
-    yield sync(f, another_third_value.eq(True))
+    f.d.sync += another_third_value.eq(True)
+    yield
 ```
 
 This can be used to "await" in hardware, like awaiting a memory read to chain it with a memory write:
@@ -114,7 +118,7 @@ class MyModule(wiring.Component):
     return m
 
 def program(f: Flow, my_module: MyModule):
-  yield tick(f)
+  yield
 ```
 
 [coroutines]: https://en.wikipedia.org/wiki/Coroutine

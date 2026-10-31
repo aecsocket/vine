@@ -1,5 +1,6 @@
 from collections.abc import Callable, Generator, Iterable
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any
 
 from amaranth import *
@@ -12,10 +13,7 @@ __all__ = [
   "Capture",
   "Flow",
   "ValueLike",
-  "comb",
   "expand",
-  "sync",
-  "tick",
 ]
 
 type ValueLike = Value | ValueCastable | Enum | int
@@ -30,6 +28,13 @@ class Flow:
     self.comb: list[Statement] = []
     self.sync: list[Statement] = []
     self.on_done: list[Statement] = []
+    self.d = SimpleNamespace(
+      comb=FlowDomain(lambda stmts: self.accumulate(comb=stmts)),
+      sync=FlowDomain(lambda stmts: self.accumulate(sync=stmts)),
+      on_done=FlowDomain(lambda stmts: self.accumulate(on_done=stmts)),
+      until=FlowDomain(lambda stmt: self.accumulate(until=stmt)),
+    )
+
     self.after_step: list[Capture] = []
     self.captures: list[Capture] = []
     self.until: Value = Const(True)
@@ -88,9 +93,17 @@ class Flow:
     return FlowWhile(self, cond)
 
 
+class FlowDomain:
+  def __init__(self, assign):
+    self.assign = assign
+
+  def __iadd__(self, stmts):
+    self.assign(stmts)
+    return self
+
 class Block:
   """List of operations to perform during elaboration, which may branch out
-  into more conditional blocks.
+  into more conditional blocks or control flow structures.
   """
 
   def __init__(self):
@@ -364,14 +377,3 @@ def expand(
       with m.State(str(i)):
         emit(states[i])
       i += 1
-
-# helpers / higher-level API
-
-def sync(f: Flow, assigns: Statement | Iterable[Statement]) -> None:
-  f.accumulate(sync=assigns)
-
-def comb(f: Flow, assigns: Statement | Iterable[Statement]) -> None:
-  f.accumulate(comb=assigns)
-
-def tick(f: Flow) -> None:
-  f.accumulate()
