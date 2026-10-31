@@ -23,10 +23,10 @@ wiring.connect(m, dut.alloc, alloc.control)
 wiring.connect(m, dut.active, active.control)
 
 async def testbench_foo(ctx):
-  ctx.set(heap.memory.data[0], Port.invalid())
-  ctx.set(heap.memory.data[1], Port.invalid())
+  ctx.set(heap.memory.data[0], Port.none())
+  ctx.set(heap.memory.data[1], Port.none())
   ctx.set(heap.memory.data[2], Port.eraser())
-  ctx.set(heap.memory.data[3], Port.invalid())
+  ctx.set(heap.memory.data[3], Port.none())
   ctx.set(alloc.empty, Const(4)) # since we've alloc'd 4 slots
   ctx.set(dut.req_interact, True)
   ctx.set(dut.req_a, Port.comb(0, 7))

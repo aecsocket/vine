@@ -19,13 +19,27 @@ Stat = _am.unsigned(STAT_WIDTH)
 
 # ports
 class Tag(_enum.Enum, shape=3):
-  INVALID = 0
-  WIRE = 1
-  GRAFT = 2
-  ERASE = 3
-  EXT_VAL = 4
-  COMB = 5
-  EXT_FN = 6
+  NONE = 0b000
+  """No valid port at this address.
+
+  `payload` and `label` are all zeroes if this is a freshly allocated port,
+  or all ones if this is a just-freed port."""
+
+  WIRE = 0b001
+  """Wire which joins to another port at address `payload`.
+
+  `label` is always zeroed."""
+
+  GRAFT = 0b010
+
+  ERASE = 0b011
+  """Eraser port.
+
+  `payload` and `label` are always zeroed."""
+
+  EXT_VAL = 0b100
+  COMB = 0b101
+  EXT_FN = 0b110
 
 
 class Port(_data.Struct):
@@ -50,20 +64,44 @@ class Port(_data.Struct):
     return one, two
 
   @staticmethod
-  def invalid():
-    return _am.Const({"tag": Tag.INVALID, "payload": 0, "label": 0}, Port)
+  def none():
+    return _am.Const({
+      "tag": Tag.NONE,
+      "payload": 0,
+      "label": 0,
+    }, Port)
+
+  @staticmethod
+  def freed():
+    return _am.Const({
+      "tag": Tag.NONE,
+      "payload": 2 << 45 - 1,
+      "label": 2 << 16 - 1,
+    }, Port)
 
   @staticmethod
   def wire(addr):
-    return _am.Const({"tag": Tag.WIRE, "payload": addr, "label": 0}, Port)
+    return _am.Const({
+      "tag": Tag.WIRE,
+      "payload": addr,
+      "label": 0,
+    }, Port)
 
   @staticmethod
   def eraser():
-    return _am.Const({"tag": Tag.ERASE, "payload": 0, "label": 0}, Port)
+    return _am.Const({
+      "tag": Tag.ERASE,
+      "payload": 0,
+      "label": 0,
+    }, Port)
 
   @staticmethod
   def comb(addr, label):
-    return _am.Const({"tag": Tag.COMB, "payload": addr, "label": label}, Port)
+    return _am.Const({
+      "tag": Tag.COMB,
+      "payload": addr,
+      "label": label,
+    }, Port)
 
 
 assert Port.as_shape().size == WORD_WIDTH

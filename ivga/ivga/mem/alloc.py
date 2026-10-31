@@ -6,7 +6,7 @@ from amflow import Flow, ValueLike, expand
 from ivga.mem.heap import HeapPort
 from ivga.util.arbiter import make_arbiter_type
 
-from ivga import ADDR_MAX, Addr, Stat, flatten
+from ivga import ADDR_MAX, Addr, Port, Stat, Tag, flatten
 
 ALLOC_LANES = 4
 """How many pairs (2 words) can be allocated at once."""
@@ -176,6 +176,9 @@ def free(f: Flow, alloc: Alloc):
 
   with f.While(remaining != 0):
     addr = addrs[(remaining - 1).as_unsigned()]
+
+    # store a marker saying this word is free now
+    yield HeapPort.write(f, alloc.heap, addr=addr, write=Port.freed())
 
     f.d.on_done += [
       alloc.free_head.eq(addr),

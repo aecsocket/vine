@@ -23,7 +23,7 @@ wiring.connect(m, dut.alloc, alloc.control)
 wiring.connect(m, dut.active, active.control)
 
 async def testbench_foo(ctx):
-  ctx.set(heap.memory.data[0], Port.invalid())
+  ctx.set(heap.memory.data[0], Port.none())
   ctx.set(heap.memory.data[1], Port.wire(2))
   ctx.set(heap.memory.data[2], Port.eraser())
   ctx.set(alloc.empty, 4) # Reserve slots 0..3.

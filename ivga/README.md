@@ -105,3 +105,15 @@ nevermind my arbiter transactional model is wrong FUUCKKKK
 GPT linked me this https://fpgacpu.ca/fpga/outline.html - looks useful.
 
 Okay, it's getting kinda impossible to write more Amaranth code without addressing something important. *Everywhere* in this code I'm writing like, request alloc -> in the next FSM state, hold alloc high + wait for grant -> in the next FSM state, hold low and wait for done. Repeatedly. And this is happening with alloc, with heap, with stack, everything. it's REALLY hard to follow the actual goddamn control flow. I need to spend some time designing some kind of way to generate this code at a higher level, otherwise I'm gonna go insane.
+
+## 31 Oct
+
+I've still been grinding away at amflow. I got amflow working with control flow and stuff as well, mostly AI coded but I did the design, because I cba to figure out the details of how Amaranth and Python work. I'm here to learn hardware.
+
+Anyways, I got the heap, allocator, stack, linker, interactor all rewritten with the new amflow API and it's SO much more readable!! You can actually track control flow with `yield`s and `f.If` and `f.While` etc, it's amazing.
+
+To implement commutation, I have to implement something new in the allocator. 2-word allocations and frees. Otherwise, I can't guarantee that `word ^ 1` points to a port; the free list stores individual freed *words*, not *word pairs*, so `word` might be a valid allocation I get from the allocator, but `word ^ 1` not necessarily. I want to match the IVM here, which allocates in pairs of words, and frees in individual words, but only finishes the free once BOTH words (both *halves* of a *pair*) are freed.
+
+My AI raised something interesting. The IVM uses the heap to track allocator bookkeeping - when a word is freed, we write `!0b111 = 0b1111_1111_[...]_1000` into it - this is a `Tag.INVALID` with all-ones payload and label. AI proposed that we have a `list[pending]` bitfield, which takes `capacity_in_words / 2` bits of extra FPGA memory. That is, if I have a heap of 1KiB/1024 words (64KiB of memory), I need 0.5KiB (512B) of extra DRAM to track which pairs are freed. For a heap of 256MiB, that's 512KiB of memory used for allocator accounting. This lets us avoid a heap write, but I *really* don't like that extra memory usage. I think we have to go with the heap write here; we can't waste this memory, and also we'll eventually have to touch the heap anyway.
+
+Also in theory I can make the allocator work on "pages" instead of "pairs" (or rather, a pair is just the case where page size = 2 words), but theres not much point. But just interesting to note.

@@ -157,7 +157,7 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
     raw_previous = yield HeapPort.swap(f, linker.heap, addr=wire.payload, write=other)
     previous = Port(raw_previous)
 
-    with f.If(previous.tag == Tag.INVALID):
+    with f.If(previous.tag == Tag.NONE):
       # no node at A.payload's old slot, no work left
       f.d.sync += linker.done.eq(True)
       yield
@@ -178,7 +178,7 @@ def follow(f: Flow, linker: Linker, p):
     raw_q = yield HeapPort.read(f, linker.heap, addr=p.payload)
     q = Port(raw_q)
 
-    with f.If(q.tag == Tag.INVALID):
+    with f.If(q.tag == Tag.NONE):
       f.Break()
     with f.Else():
       f.d.on_done += p.eq(q)
