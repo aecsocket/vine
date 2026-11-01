@@ -9,4 +9,6 @@ class FaultPort(wiring.Signature):
       "halt": In(1),
       "oom": Out(1),
       "active_full": Out(1),
+      "ext_copy": Out(1),
+      "invalid_interaction": Out(1),
     })

@@ -2,6 +2,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, expand
+from ivga.extrinsic import label_is_copy
 from ivga.mem.heap import HeapArbiter, HeapPort
 from ivga.mem.page_alloc import PageAllocPort
 from ivga.mem.pair_alloc import PairAllocArbiter, PairAllocPort
@@ -183,9 +184,11 @@ def program(f: Flow, interact: Interact):
       yield from call(f, interact, b, a)
 
     with f.Else():
-      # TODO: flag an invalid interaction and link both ports to erasers.
-      f.d.sync += Assert(False, "Invalid interaction")
-      yield
+      f.d.comb += interact.fault.invalid_interaction.eq(True)
+      yield LinkerPort.link_batch(f, [
+        (interact.link_ports[0], a, Port.eraser()),
+        (interact.link_ports[1], b, Port.eraser()),
+      ])
 
 def annihilate(f: Flow, interact: Interact, a, b):
   a1, a2 = Port.aux(a)
@@ -257,11 +260,12 @@ def graft(f: Flow, interact: Interact, a, b):
   ]
   yield GrafterPort.graft(f, interact.grafter, addr=a.payload, port=b)
 
-
 def copy_ext_val(f: Flow, interact: Interact, value, node):
-
-  # TODO: check copyability; non-copyable values erase the node and raise a fault.
-  yield
+  with f.If(label_is_copy(value.label)):
+    yield from copy(f, interact, value, node)
+  with f.Else():
+    f.d.comb += interact.fault.ext_copy.eq(True)
+    yield from copy(f, interact, Port.eraser(), node)
 
 
 def call(f: Flow, interact: Interact, function, value):
