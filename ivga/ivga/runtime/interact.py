@@ -2,7 +2,8 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, expand
-from ivga.extrinsic import label_is_copy
+from ivga.extrinsic import EXT_FNS, FN_ID_MASK, SWAP_BIT, TY_IDS, ext_val_label_is_copy
+from ivga.extrinsic.common import ExtFnContext
 from ivga.mem.heap import HeapArbiter, HeapPort
 from ivga.mem.page_alloc import PageAllocPort
 from ivga.mem.pair_alloc import PairAllocArbiter, PairAllocPort
@@ -28,6 +29,7 @@ class InteractPort(wiring.Signature):
       "stat_copy": In(Stat),
       "stat_commute": In(Stat),
       "stat_graft": In(Stat),
+      "stat_extrinsic": In(Stat),
       "stat_reset": Out(1),
     })
 
@@ -100,6 +102,7 @@ class Interact(wiring.Component):
         interact.stat_copy.eq(0),
         interact.stat_commute.eq(0),
         interact.stat_graft.eq(0),
+        interact.stat_extrinsic.eq(0),
       ]
 
     return m
@@ -261,13 +264,78 @@ def graft(f: Flow, interact: Interact, a, b):
   yield GrafterPort.graft(f, interact.grafter, addr=a.payload, port=b)
 
 def copy_ext_val(f: Flow, interact: Interact, value, node):
-  with f.If(label_is_copy(value.label)):
+  with f.If(ext_val_label_is_copy(value.label)):
     yield from copy(f, interact, value, node)
   with f.Else():
     f.d.comb += interact.fault.ext_copy.eq(True)
     yield from copy(f, interact, Port.eraser(), node)
 
-
 def call(f: Flow, interact: Interact, function, value):
-  # TODO: dispatch merge/split calls using the function ID and swap flag.
-  yield
+  function, value = f.capture(function), f.capture(value)
+  function_id = function.label & FN_ID_MASK
+  other_wire, out = Port.aux(function)
+
+  with f.If(function_id < len(EXT_FNS)):
+    other = yield HeapPort.read(f, interact.own_heap, addr=other_wire.payload)
+    other = Port(other)
+
+    with f.If(other.tag == Tag.EXT_VAL):
+      # Consume the stored operand. The output half remains owned by the linker.
+      f.d.on_done += interact.stat_extrinsic.eq(interact.stat_extrinsic + 1)
+      yield PairAllocPort.free(f, interact.own_pairs, addr=other_wire.payload)
+      swapped = function.label[15]
+      a = Port(Mux(swapped, other, value))
+      b = Port(Mux(swapped, value, other))
+      yield from execute_ext_fn(f, interact, function_id, a, b, out)
+
+    with f.Else():
+      # Waiting here could deadlock the sole reducer. Re-enter through a fresh
+      # function node when the missing operand becomes available instead.
+      bases, oom = yield PairAllocPort.alloc(f, interact.own_pairs, n_pairs=1)
+      with f.If(oom):
+        f.d.comb += interact.fault.oom.eq(True)
+        f.d.sync += interact.done.eq(True)
+        yield
+
+      with f.Else():
+        base = f.capture(bases[0])
+        yield HeapPort.write(f, interact.own_heap, addr=base, write=0)
+        yield HeapPort.write(f, interact.own_heap, addr=Addr.other_half(base), write=0)
+
+        continuation = Port.new(Const(Tag.EXT_FN), function.label ^ SWAP_BIT, Value.cast(base))
+        left, right = Port.aux(continuation)
+        f.d.on_done += interact.done.eq(True)
+        yield LinkerPort.link_batch(f, [
+          (interact.link_ports[0], other_wire, continuation),
+          (interact.link_ports[1], left, value),
+          (interact.link_ports[2], right, out),
+        ])
+
+  with f.Else():
+    f.d.comb += interact.fault.ext_generic.eq(True)
+    f.d.on_done += interact.done.eq(True)
+    yield LinkerPort.link_batch(f, [
+      (interact.link_ports[0], function, Port.eraser()),
+      (interact.link_ports[1], value, Port.eraser()),
+    ])
+
+def execute_ext_fn(f: Flow, interact: Interact, function_id, a, b, out):
+  for i, entry in enumerate(EXT_FNS):
+    with f.If(function_id == i) if i == 0 else f.Elif(function_id == i):
+      inputs_valid = (
+        (a.label == TY_IDS[entry.inputs[0]])
+        & (b.label == TY_IDS[entry.inputs[1]]))
+
+      with f.If(inputs_valid):
+        cx = ExtFnContext(f, interact.own_heap, interact.link_ports[0], a, b, out)
+        cx.ty_id.update(TY_IDS)
+        yield from entry.fn(cx)
+
+        f.d.comb += interact.fault.ext_generic.eq(cx.error)
+        f.d.sync += interact.done.eq(True)
+        yield
+
+      with f.Else():
+        f.d.comb += interact.fault.ext_generic.eq(True)
+        f.d.on_done += interact.done.eq(True)
+        yield LinkerPort.link(f, interact.link_ports[0], a=out, b=Port.eraser())
