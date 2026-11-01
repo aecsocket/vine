@@ -1,6 +1,7 @@
 from collections.abc import Callable, Generator, Iterable
 from typing import Any
 
+from amaranth import Signal
 from amflow import Flow
 
 from ivga import Port
@@ -29,10 +30,13 @@ class ExtFnContext:
     linker: LinkerPort,
     a: Port,
     b: Port,
+    out: Port,
   ):
     self.f = f
     self.heap = heap
     self.linker = linker
     self.a = a
     self.b = b
+    self.out = out
+    self.error = Signal()
     self.ty_id = {}

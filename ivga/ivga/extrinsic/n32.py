@@ -17,6 +17,8 @@ def arith(fn: Callable[[Value, Value], Value]) -> ExtFnMake:
     result = Signal(32)
     cx.f.d.comb += result.eq(fn(a, b))
     out = Port.new(Const(Tag.EXT_VAL), Const(ty_n32, 16), result)
+
+    cx.f.d.on_done += cx.error.eq(False)
     yield LinkerPort.link(cx.f, cx.linker, a=cx.out, b=out)
   return run
 
