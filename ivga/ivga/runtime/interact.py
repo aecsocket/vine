@@ -9,10 +9,10 @@ from ivga.runtime.fault import FaultPort
 
 from ivga import Addr, Port, Port2, Stat, Tag, flatten
 
-from .linker import Linker, LinkerPort
+from .linker import Linker, LinkPort
 
 
-class InteractorPort(wiring.Signature):
+class InteractPort(wiring.Signature):
   def __init__(self):
     super().__init__({
       "req_interact": Out(1),
@@ -30,8 +30,8 @@ class InteractorPort(wiring.Signature):
 
 LINKERS = 8
 
-class Interactor(wiring.Component):
-  control: In(InteractorPort())
+class Interact(wiring.Component):
+  control: In(InteractPort())
   heap: Out(HeapPort())
   alloc: Out(AllocPort())
   active: Out(StackPort(Port2))
@@ -46,8 +46,8 @@ class Interactor(wiring.Component):
     flatten(self, self.control)
 
   def elaborate(self, platform):
-    m, interactor = Module(), self
-    m.d.sync += interactor.done.eq(False)
+    m, interact = Module(), self
+    m.d.sync += interact.done.eq(False)
 
     heap_arb = m.submodules.heap_arb = self.heap_arb
     alloc_arb = m.submodules.alloc_arb = self.alloc_arb
@@ -63,7 +63,7 @@ class Interactor(wiring.Component):
       wiring.connect(m, active_arb.clients[i], linker.active)
 
     # all heap/alloc access is arb'd thru `heap_arb`/`alloc_arb`,
-    # but some of our own interactor code (eg in commutation)
+    # but some of our own interact code (eg in commutation)
     # needs to access the heap or allocator.
     # so we need an extra client - ourselves.
     own_heap = self.own_heap = HeapPort().create()
@@ -71,25 +71,25 @@ class Interactor(wiring.Component):
     own_alloc = self.own_alloc = AllocPort().create()
     wiring.connect(m, alloc_arb.clients[LINKERS], own_alloc)
 
-    m.d.sync += interactor.done.eq(False)
-    expand(m, lambda f: program(f, interactor))
+    m.d.sync += interact.done.eq(False)
+    expand(m, lambda f: program(f, interact))
 
-    with m.If(interactor.stat_reset):
+    with m.If(interact.stat_reset):
       m.d.sync += [
-        interactor.stat_annihilate.eq(0),
-        interactor.stat_copy.eq(0),
-        interactor.stat_commute.eq(0),
-        interactor.stat_graft.eq(0),
+        interact.stat_annihilate.eq(0),
+        interact.stat_copy.eq(0),
+        interact.stat_commute.eq(0),
+        interact.stat_graft.eq(0),
       ]
 
     return m
 
-def program(f: Flow, interactor: Interactor):
-  f.d.comb += interactor.granted.eq(True)
+def program(f: Flow, interact: Interact):
+  f.d.comb += interact.granted.eq(True)
 
-  with f.If(interactor.req_interact):
-    a = f.capture(interactor.req_a)
-    b = f.capture(interactor.req_b)
+  with f.If(interact.req_interact):
+    a = f.capture(interact.req_a)
+    b = f.capture(interact.req_b)
 
     def ext_or_erase(tag):
       return (tag == Tag.EXT_VAL) | (tag == Tag.ERASE)
@@ -106,7 +106,7 @@ def program(f: Flow, interactor: Interactor):
 
     f.d.sync += Assert(
       ~already_handled,
-      "Port pair sh ould have already been resolved by linker"
+      "Port pair should have already been resolved by linker"
     )
 
     with f.If(
@@ -114,18 +114,18 @@ def program(f: Flow, interactor: Interactor):
       & (b.tag == Tag.COMB)
       & (b.label != 0)
     ):
-      yield from copy(f, interactor, a, b)
+      yield from copy(f, interact, a, b)
     with f.Elif(
       (a.tag == Tag.COMB)
       & (b.tag == Tag.GRAFT)
       & (a.label != 0)
     ):
-      yield from copy(f, interactor, b, a)
+      yield from copy(f, interact, b, a)
 
     with f.Elif(a.tag == Tag.GRAFT):
-      yield from graft(f, interactor, a, b)
+      yield from graft(f, interact, a, b)
     with f.Elif(b.tag == Tag.GRAFT):
-      yield from graft(f, interactor, b, a)
+      yield from graft(f, interact, b, a)
 
     with f.Elif(
       (a.tag == Tag.COMB)
@@ -134,7 +134,7 @@ def program(f: Flow, interactor: Interactor):
     ):
       # N >-< N where both nodes have the same label;
       # annihilate each other
-      yield from annihilate(f, interactor, a, b)
+      yield from annihilate(f, interact, a, b)
 
     with f.Elif(
       ((a.tag == Tag.COMB) & (b.tag == Tag.COMB))
@@ -144,41 +144,41 @@ def program(f: Flow, interactor: Interactor):
       # (Comb|ExtFn) >-< (Comb|ExtFn); if two Combs,
       # they must not have the same label, since we handled
       # that in the last case, so we commute
-      yield from commute(f, interactor, a, b)
+      yield from commute(f, interact, a, b)
 
     with f.Elif(a.tag == Tag.ERASE):
       # Erase >-< B (B1, B2)
       # => (Erase >-< B1, Erase >-< B2)
-      yield from copy(f, interactor, a, b)
+      yield from copy(f, interact, a, b)
 
-def annihilate(f: Flow, interactor: Interactor, a, b):
+def annihilate(f: Flow, interact: Interact, a, b):
   a1, a2 = Port.aux(a)
   b1, b2 = Port.aux(b)
   f.d.on_done += [
-    interactor.done.eq(True),
-    interactor.stat_annihilate.eq(interactor.stat_annihilate + 1),
+    interact.done.eq(True),
+    interact.stat_annihilate.eq(interact.stat_annihilate + 1),
   ]
-  yield LinkerPort.link_batch(f, [
-    (interactor.linkers[0], a1, b1),
-    (interactor.linkers[1], a2, b2),
+  yield LinkPort.link_batch(f, [
+    (interact.linkers[0], a1, b1),
+    (interact.linkers[1], a2, b2),
   ])
 
-def copy(f: Flow, interactor: Interactor, a, b):
+def copy(f: Flow, interact: Interact, a, b):
   x, y = Port.aux(b)
   f.d.on_done += [
-    interactor.done.eq(True),
-    interactor.stat_copy.eq(interactor.stat_copy + 1),
+    interact.done.eq(True),
+    interact.stat_copy.eq(interact.stat_copy + 1),
   ]
-  yield LinkerPort.link_batch(f, [
-    (interactor.linkers[0], x, a),
-    (interactor.linkers[1], y, a),
+  yield LinkPort.link_batch(f, [
+    (interact.linkers[0], x, a),
+    (interact.linkers[1], y, a),
   ])
 
-def commute(f: Flow, interactor: Interactor, a, b):
-  bases, oom = yield AllocPort.alloc(f, interactor.alloc, n_pairs=4)
+def commute(f: Flow, interact: Interact, a, b):
+  bases, oom = yield AllocPort.alloc(f, interact.alloc, n_pairs=4)
   with f.If(oom):
     # TODO raise a fault
-    f.d.sync += interactor.done.eq(True)
+    f.d.sync += interact.done.eq(True)
     yield
   with f.Else():
     def new_port(base):
@@ -199,19 +199,19 @@ def commute(f: Flow, interactor: Interactor, a, b):
     bl, br = Port.aux(b)
 
     # TODO: maybe just instantiate 4 linkers?
-    yield LinkerPort.link_batch(f, [
+    yield LinkPort.link_batch(f, [
       # link fresh wires
-      (interactor.linkers[0], a1l, b1l),
-      (interactor.linkers[1], a1r, b2l),
-      (interactor.linkers[2], a2l, b1r),
-      (interactor.linkers[3], a2r, b2r),
+      (interact.linkers[0], a1l, b1l),
+      (interact.linkers[1], a1r, b2l),
+      (interact.linkers[2], a2l, b1r),
+      (interact.linkers[3], a2r, b2r),
 
       # link node wires and freshly made ports
-      (interactor.linkers[4], al, b1p),
-      (interactor.linkers[5], ar, b2p),
-      (interactor.linkers[6], bl, a1p),
-      (interactor.linkers[7], br, a2p),
+      (interact.linkers[4], al, b1p),
+      (interact.linkers[5], ar, b2p),
+      (interact.linkers[6], bl, a1p),
+      (interact.linkers[7], br, a2p),
     ])
 
-def graft(f: Flow, interactor: Interactor, a, b):
+def graft(f: Flow, interact: Interact, a, b):
   yield

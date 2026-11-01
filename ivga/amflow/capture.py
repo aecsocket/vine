@@ -16,12 +16,13 @@ from amaranth.hdl._ast import (
   Concat,
   Operator,
   Part,
+  Print,
   Property,
   Slice,
   Statement,
   SwitchValue,
 )
-from amaranth.hdl._xfrm import StatementTransformer
+from amaranth.hdl._xfrm import StatementTransformer, ValueTransformer
 
 
 def _call(target: object, name: str, *args: object, **kwargs: object) -> object:
@@ -177,6 +178,35 @@ class Capture(_Proxy):
     shape = reg.shape()
     read = shape(forwarded) if isinstance(shape, ShapeCastable) else forwarded
     super().__init__(read, reg)
+
+
+class CaptureReads(ValueTransformer, StatementTransformer):
+  """Bind forwarding at a control-flow position, not through a shared selector."""
+
+  def __init__(self, captures: Iterable[Capture], forwarded: Iterable[Capture]):
+    active = {id(captured) for captured in forwarded}
+    self._bypasses = {
+      id(captured.bypass): Const(id(captured) in active)
+      for captured in captures
+    }
+
+  def read(self, value: Value) -> Value:
+    return cast(Value, cast(object, self.on_value(value)))
+
+  @override
+  def on_Signal(self, value: Signal) -> Value:
+    return self._bypasses.get(id(value), value)
+
+  @override
+  def on_Property(self, stmt: Property) -> Property:
+    # The transformed property is emitted instead of the original MustUse node.
+    stmt._MustUse__used = True
+    return super().on_Property(stmt)
+
+  @override
+  def on_Print(self, stmt: Print) -> Print:
+    stmt._MustUse__used = True
+    return super().on_Print(stmt)
 
 
 class CaptureWrites(StatementTransformer):

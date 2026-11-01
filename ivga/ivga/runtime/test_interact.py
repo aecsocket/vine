@@ -4,7 +4,7 @@ from amaranth.sim import Simulator
 from ivga.mem.alloc import Alloc
 from ivga.mem.heap import Heap, HeapArbiter
 from ivga.mem.stack import Stack
-from ivga.runtime.interactor import Interactor
+from ivga.runtime.interact import Interact
 
 from ivga import Port, Port2
 
@@ -15,7 +15,7 @@ heap = m.submodules.heap = Heap()
 heap_arb = m.submodules.heap_arb = HeapArbiter(2)
 alloc = m.submodules.alloc = Alloc(8)
 active = m.submodules.active = Stack(Port2, 8)
-dut = m.submodules.interactor = Interactor()
+dut = m.submodules.interact = Interact()
 wiring.connect(m, heap_arb.clients[0], alloc.heap)
 wiring.connect(m, heap_arb.clients[1], dut.heap)
 wiring.connect(m, heap_arb.real, heap.control)

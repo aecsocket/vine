@@ -176,6 +176,14 @@ following action stalls. Later reads use the stored value. Completion assignment
 can override initialization at that same edge. Loop back-edges skip captures outside the loop;
 reaching a capture node again reinitializes it.
 
+Capture reads inside Flow are bound at each control-flow position. Before a capture node is
+visited in the current state, reads use its register; after visiting it, reads forward its source.
+This lets a loop exit using an old captured count and immediately re-enter the program with a
+fresh count, without making the exit condition depend on its own bypass selector. Pending effects
+keep their position-bound reads; retry states rebind the original effects to stored captures.
+Zero-time cycle detection includes the set of forwarded captures, so a revisit after fresh
+captures is not mistaken for an unchanged control-flow cycle. No extra clock boundary is added.
+
 Capture does not add a setup cycle. It also does not make arbitrary synchronous assignments
 visible before their edge: `sync(counter = 4)` before a loop still cannot make the loop condition
 see the new register value in that same cycle. Capture provides an explicit bypass for this.

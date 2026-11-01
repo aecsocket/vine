@@ -6,7 +6,7 @@ from amaranth import *
 from amaranth import ValueCastable
 from amaranth.hdl._ast import Statement, Switch
 
-from amflow.capture import Capture, CaptureWrites
+from amflow.capture import Capture, CaptureReads, CaptureWrites
 
 __all__ = [
   "Capture",
@@ -327,6 +327,15 @@ def expand(
       else:
         m.d[domain] += stmt
 
+  def bind(assigns: Assigns, forwarded: tuple[Capture, ...]) -> Assigns:
+    reads = CaptureReads(flow.captures, forwarded)
+    return Assigns(
+      list(reads.on_statements(writes.on_statements(assigns.comb))),
+      list(reads.on_statements(writes.on_statements(assigns.sync))),
+      list(reads.on_statements(writes.on_statements(assigns.on_done))),
+      reads.read(assigns.until), assigns.after_step,
+    )
+
   def merge(groups: Iterable[Assigns]) -> Assigns:
     result = Assigns([], [], [], Const(True))
     for group in groups:
@@ -453,54 +462,63 @@ def expand(
       states.append(target)
     return names[target]
 
+  # Pending effects retain both their originals for retries and position-bound
+  # reads for this edge; a later capture must not change an earlier effect.
   def emit(
     target: Target,
-    path: tuple[Decision | Capturing | Effecting, ...] = (),
-    pending: tuple[Assigns, ...] = (),
+    path: tuple[tuple[Decision | Capturing | Effecting, frozenset[int]], ...] = (),
+    pending: tuple[tuple[Assigns, Assigns], ...] = (),
     replay: tuple[Assigns, ...] = (),
+    forwarded: tuple[Capture, ...] = (),
   ) -> None:
     if target is None:
       target = entry
     assert target is not None
 
     if isinstance(target, (Decision, Capturing, Effecting)):
-      if target in path:
-        if any(group.after_step for group in pending):
+      position = (target, frozenset(id(captured) for captured in forwarded))
+      if position in path:
+        if any(group.after_step for _, group in pending):
           raise ValueError("Uncommitted `after_step` captures; did you forget to `yield`?")
-        if any(group.on_done or not _always(group.until) for group in pending):
+        if any(group.on_done or not _always(group.until) for _, group in pending):
           raise ValueError("A control-flow cycle with completion effects must reach a `yield`")
         m.next = schedule(target)
         return
-      path = (*path, target)
+      path = (*path, position)
 
     if isinstance(target, Effecting):
       effects = target.effects
-      emit_statements("comb", effects.comb)
-      emit_statements("sync", effects.sync)
-      emit(target.following, path, (*pending, effects), (*replay, effects))
+      bound = bind(effects, forwarded)
+      emit_statements("comb", bound.comb)
+      emit_statements("sync", bound.sync)
+      emit(target.following, path, (*pending, (effects, bound)), (*replay, effects), forwarded)
       return
 
     if isinstance(target, Capturing):
       captured = target.captured
+      reads = CaptureReads(flow.captures, forwarded)
       m.d.comb += captured.bypass.eq(True)
-      m.d.sync += captured.reg.eq(captured.source)
-      emit(target.following, path, pending, replay)
+      emit_statements("sync", [captured.reg.eq(reads.read(Value.cast(captured.source)))])
+      emit(target.following, path, pending, replay, (*forwarded, captured))
       return
 
     if isinstance(target, Decision):
       # Entry-state effects stay at the dispatch; pending handshakes keep running.
       replay = tuple(group for group in replay if not _always(group.until))
+      reads = CaptureReads(flow.captures, forwarded)
       for i, (cond, arm) in enumerate(target.arms):
-        with m.If(cond) if i == 0 else m.Elif(cond):
-          emit(arm, path, pending, replay)
+        condition = reads.read(cond)
+        with m.If(condition) if i == 0 else m.Elif(condition):
+          emit(arm, path, pending, replay, forwarded)
       with m.Else():
-        emit(target.otherwise, path, pending, replay)
+        emit(target.otherwise, path, pending, replay, forwarded)
       return
 
     assigns = target.assigns
-    emit_statements("comb", assigns.comb)
-    emit_statements("sync", assigns.sync)
-    completion = merge((*pending, assigns))
+    bound = bind(assigns, forwarded)
+    emit_statements("comb", bound.comb)
+    emit_statements("sync", bound.sync)
+    completion = merge((*[group for _, group in pending], bound))
     following = target.following
     for captured in reversed(completion.after_step):
       following = Capturing(captured, following)
@@ -512,8 +530,9 @@ def expand(
       retry = target
       if pending:
         repeated = merge((*replay, assigns))
+        original = merge((*[group for group, _ in pending], assigns))
         retry = Action(Assigns(
-          repeated.comb, repeated.sync, completion.on_done, completion.until,
+          repeated.comb, repeated.sync, original.on_done, original.until,
         ), following)
       with m.If(completion.until):
         emit_statements("sync", completion.on_done)

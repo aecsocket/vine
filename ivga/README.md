@@ -123,3 +123,20 @@ type safety thought: rn our heap works on `Word`s, and it can't work on `Port`s 
 now the thing is, a Word is 64 bits, and the allocator writes 45-bit Addrs in. a Word can *store* an Addr - Wires store Addrs in their `payload`! so what if, instead of the Alloc writing Addrs into the heap, they wrote `Port(tag: Tag.NONE, payload: <addr payload>, label: 0)`?
 
 actually I just implemented the above ^^ was pretty easy.
+
+## 1 Nov
+
+I'm working on a big scary part now - GRAFTING. Why is grafting so complicated here? Up until this point we've been working under the assumption that all initial ports were specified in memory/heap somewhere. With grafts that calculus changes, and now a `Port(Tag.GRAFT, payload: 0x1234, label: 0)` points to a _graft struct_ at index `0x1234`. That graft struct is NOT a `Port` or a `Word` - it's a `Graft`, which I assume would look like:
+- `heap[base][30:0] = next_register: Register`
+- `heap[base][31:31] = error: bool`
+- `heap[base][64:32] = instructions_len: u32`
+
+That mirrors the Rust `struct Graft`. So actually, wait... a whole `Graft` could fit in a single 64-bit word. Use the lower 31 bits for `next_register`, the 32nd bit for `error`, and the upper 32 bits for `instructions_len`; then the instructions data is stored contiguously after `heap[base]`. This assumes that we ALWAYS have a variable-sized contiguous allocation after `heap[base]` - we can assume this on program startup, yes, but _not necessarily_ if/when we load an arbitrary program.
+
+This is an important point to note too. I'm planning for the hardware to be able to load arbitrary programs - so from an existing FlatNet it can put arbitrary programs into its heap, which means arbitrary Grafts. Which means we _will_ need to de/allocate grafts in the heap.
+
+This brings me onto what I just thought about... the free list. That currently uses a separate bit of DRAM to store its stack, but really it shouldn't be, it should use our available global memory. Or should it? I mean, I don't know how big an active list might get, and in theory it could be huge, so we should allow tucking it all away in DRAM if we need to.
+
+Back to grafts... that whole thing about contiguous allocation. Once we introduce the idea of de/allocating programs and grafts, we like don't have a guarantee of that at all. Which means we probably need an MMU... and a TLB... ok this is getting scary. WAIT maybe we don't need to! The graft can be a chain of allocations, and we don't need contiguous memory, just store the address of the next allocation at the end. OK crisis averted no need for an MMU (yet).
+
+Annoyingly this means I have to go back on the thing I did yesterday where `Heap` works on `Port`s not `Word`s.

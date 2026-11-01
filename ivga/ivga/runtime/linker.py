@@ -155,6 +155,7 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
     # swap_target(A as Wire, B)
     # => swap(&mut heap[A.payload], B)
     previous = yield HeapPort.swap(f, linker.heap, addr=wire.payload, write=other)
+    previous = Port(previous)
 
     with f.If(previous.tag == Tag.NONE):
       # no node at A.payload's old slot, no work left
@@ -174,7 +175,8 @@ def follow(f: Flow, linker: Linker, p):
   p = f.capture(p)
 
   with f.While(p.tag == Tag.WIRE):
-    q = yield HeapPort.read(f, linker.heap, addr=p.payload)
+    raw_q = yield HeapPort.read(f, linker.heap, addr=p.payload)
+    q = Port(raw_q)
 
     with f.If(q.tag == Tag.NONE):
       f.Break()
