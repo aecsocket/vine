@@ -19,7 +19,7 @@ dut = m.submodules.interact = Interact()
 wiring.connect(m, heap_arb.clients[0], alloc.heap)
 wiring.connect(m, heap_arb.clients[1], dut.heap)
 wiring.connect(m, heap_arb.real, heap.control)
-wiring.connect(m, dut.alloc, alloc.control)
+wiring.connect(m, dut.pairs, alloc.control)
 wiring.connect(m, dut.active, active.control)
 
 async def testbench_foo(ctx):

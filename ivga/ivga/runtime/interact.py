@@ -33,14 +33,14 @@ LINKERS = 8
 class Interact(wiring.Component):
   control: In(InteractPort())
   heap: Out(HeapPort())
-  alloc: Out(PairAllocPort())
+  pairs: Out(PairAllocPort())
   active: Out(StackPort(Port2))
   fault: Out(FaultPort())
 
   def __init__(self):
     self.linkers = [Linker() for _ in range(LINKERS)]
     self.heap_arb = HeapArbiter(LINKERS + 1)
-    self.alloc_arb = PairAllocArbiter(LINKERS + 1)
+    self.pairs_arb = PairAllocArbiter(LINKERS + 1)
     self.active_arb = StackArbiter(LINKERS, Port2)
     super().__init__()
     flatten(self, self.control)
@@ -50,28 +50,27 @@ class Interact(wiring.Component):
     m.d.sync += interact.done.eq(False)
 
     heap_arb = m.submodules.heap_arb = self.heap_arb
-    alloc_arb = m.submodules.alloc_arb = self.alloc_arb
+    pairs_arb = m.submodules.pairs_arb = self.pairs_arb
     active_arb = m.submodules.active_arb = self.active_arb
     wiring.connect(m, heap_arb.real, wiring.flipped(self.heap))
-    wiring.connect(m, alloc_arb.real, wiring.flipped(self.alloc))
+    wiring.connect(m, pairs_arb.real, wiring.flipped(self.pairs))
     wiring.connect(m, active_arb.real, wiring.flipped(self.active))
 
     for i in range(LINKERS):
       linker = m.submodules[f"linker_{i}"] = self.linkers[i]
       wiring.connect(m, heap_arb.clients[i], linker.heap)
-      wiring.connect(m, alloc_arb.clients[i], linker.alloc)
+      wiring.connect(m, pairs_arb.clients[i], linker.alloc)
       wiring.connect(m, active_arb.clients[i], linker.active)
 
-    # all heap/alloc access is arb'd thru `heap_arb`/`alloc_arb`,
+    # all heap/alloc access is arb'd thru `heap_arb`/`pairs_arb`,
     # but some of our own interact code (eg in commutation)
     # needs to access the heap or allocator.
     # so we need an extra client - ourselves.
     own_heap = self.own_heap = HeapPort().create()
     wiring.connect(m, heap_arb.clients[LINKERS], own_heap)
     own_alloc = self.own_alloc = PairAllocPort().create()
-    wiring.connect(m, alloc_arb.clients[LINKERS], own_alloc)
+    wiring.connect(m, pairs_arb.clients[LINKERS], own_alloc)
 
-    m.d.sync += interact.done.eq(False)
     expand(m, lambda f: program(f, interact))
 
     with m.If(interact.stat_reset):
@@ -175,7 +174,7 @@ def copy(f: Flow, interact: Interact, a, b):
   ])
 
 def commute(f: Flow, interact: Interact, a, b):
-  bases, oom = yield PairAllocPort.alloc(f, interact.alloc, n_pairs=4)
+  bases, oom = yield PairAllocPort.alloc(f, interact.pairs, n_pairs=4)
   with f.If(oom):
     # TODO raise a fault
     f.d.sync += interact.done.eq(True)
