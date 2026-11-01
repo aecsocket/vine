@@ -29,7 +29,11 @@ class LinkerPort(wiring.Signature):
   @staticmethod
   def link(f: Flow, linker, *, a: ValueLike, b: ValueLike):
     accepted = Signal()
-    f.d.comb += linker.req_link.eq(~accepted)
+    f.d.comb += [
+      linker.req_link.eq(~accepted),
+      linker.req_a.eq(a),
+      linker.req_b.eq(b),
+    ]
     f.d.sync += accepted.eq(accepted | linker.granted)
     f.d.until += accepted & linker.done
     f.d.on_done += accepted.eq(False)
@@ -139,6 +143,7 @@ def do_link(f: Flow, linker: Linker, a, b):
         active_pair.a.eq(a),
         active_pair.b.eq(b),
       ]
+      f.d.on_done += linker.done.eq(True)
       yield StackPort.push(f, linker.active, data=active_pair)
       f.Break()
 
