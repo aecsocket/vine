@@ -150,7 +150,7 @@ def do_alloc(f: Flow, alloc: Alloc):
       alloc.free_count.eq(alloc.free_count - 2),
       alloc.stat_allocs.eq(alloc.stat_allocs + 2),
     ]
-    f.d.sync += alloc.free_head.eq(next_free_head)
+    f.d.sync += alloc.free_head.eq(next_free_head.payload)
     yield
 
   with f.If(pairs_to_alloc != 0):
@@ -182,7 +182,6 @@ def free(f: Flow, alloc: Alloc):
     # and read the other half of this pair
     # to see if we've already freed the other half
     other = HeapPort.read(f, alloc.heap, addr=Addr.other_half(addr))
-    other = Port(other)
     yield HeapPort.write(f, alloc.heap, addr=addr, write=Port.freed())
 
     f.d.on_done += [
@@ -205,7 +204,7 @@ def free(f: Flow, alloc: Alloc):
         alloc.free_head.eq(left),
         alloc.free_count.eq(alloc.free_count + 2),
       ]
-      HeapPort.write(f, alloc.heap, addr=left, write=alloc.free_head)
+      HeapPort.write(f, alloc.heap, addr=left, write=Port.with_addr(alloc.free_head))
 
     yield
 

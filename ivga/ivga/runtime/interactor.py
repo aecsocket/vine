@@ -139,11 +139,20 @@ def commute(f: Flow, interactor: Interactor, a, b):
     b1_1, b1_2 = b1, Addr.other_half(b1)
     b2_1, b2_2 = b2, Addr.other_half(b2)
 
-    a01, a02 = Port.aux(f, a)
-    b01, b02 = Port.aux(f, b)
+    a0_1, a0_2 = Port.aux(f, a)
+    b0_1, b0_2 = Port.aux(f, b)
 
     yield LinkerPort.link_batch(f, [
-      (interactor.linkers[0], a1)
+      # link fresh wires
+      (interactor.linkers[0], a1_1, b1_1),
+      (interactor.linkers[1], a1_2, b2_1),
+      (interactor.linkers[2], a2_1, b1_2),
+      (interactor.linkers[3], a2_2, b2_2),
+      # link A/B
+      (interactor.linkers[4], a0_1, b1_0),
+      (interactor.linkers[5], a2_2, b2_2),
+      (interactor.linkers[6], a2_2, b2_2),
+      (interactor.linkers[7], a2_2, b2_2),
     ])
 
 def copy(f: Flow, interactor: Interactor, a, b):

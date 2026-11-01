@@ -121,3 +121,5 @@ Also in theory I can make the allocator work on "pages" instead of "pairs" (or r
 type safety thought: rn our heap works on `Word`s, and it can't work on `Port`s directly because the heap writes arbitrary words in, when it writes addresses for the free list. this means that reading a value from the heap isn't guaranteed to be a Port. but it would be nice if it did? cause then you dont have to cast between words and ports.
 
 now the thing is, a Word is 64 bits, and the allocator writes 45-bit Addrs in. a Word can *store* an Addr - Wires store Addrs in their `payload`! so what if, instead of the Alloc writing Addrs into the heap, they wrote `Port(tag: Tag.NONE, payload: <addr payload>, label: 0)`?
+
+actually I just implemented the above ^^ was pretty easy.

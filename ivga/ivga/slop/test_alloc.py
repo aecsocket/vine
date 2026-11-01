@@ -56,6 +56,17 @@ def words(bases):
   return tuple(addr for base in bases for addr in (base, base ^ 1))
 
 
+def link_word(addr):
+  # Independent encoding: NONE tag in bits 0..2, address in payload, label zero.
+  assert 0 <= addr <= EMPTY
+  return addr << 3
+
+
+def link_addr(word):
+  assert word & 0b111 == 0 and 0 <= word >> 3 <= EMPTY, ("malformed free-list port", word)
+  return word >> 3
+
+
 @dataclass(frozen=True)
 class Transaction:
   kind: str
@@ -115,7 +126,7 @@ class Oracle:
       self.released.add(addr)
       if full:
         base = addr & ~1
-        transactions.append(Transaction("link", write_addr=base, data=self.head, word=index))
+        transactions.append(Transaction("link", write_addr=base, data=link_word(self.head), word=index))
         self.free.append(base)
     return transactions
 
@@ -145,7 +156,7 @@ class HeapModel:
 
   def drive_data(self, ctx, port, cycle):
     response = self.pending[0] if self.pending and self.pending[0].due == cycle else None
-    ctx.set(port.read_data, response.value if response else POISON)
+    ctx.set(port.read_data.as_value(), response.value if response else POISON)
     return response
 
   def drive(self, ctx, port, cycle):
@@ -162,7 +173,7 @@ class HeapModel:
       for addr in (read_addr, write_addr):
         assert addr is None or 0 <= addr < len(self.words), ("heap address", addr)
       kind = "stamp" if read and write else "pop" if read else "link"
-      request = (kind, read_addr, write_addr, ctx.get(port.write_data) if write else None)
+      request = (kind, read_addr, write_addr, ctx.get(port.write_data.as_value()) if write else None)
     if self.stalled is not None:
       assert request == self.stalled, ("payload changed/withdrawn before grant", self.stalled, request)
     granted = bool(ctx.get(port.granted))
@@ -254,7 +265,7 @@ class Harness:
       assert head == base and base % 2 == 0
       assert {base, base ^ 1} <= oracle.released
       assert memory[base ^ 1] == FREED, ("odd pair marker", base, memory[base ^ 1])
-      head = memory[base]
+      head = link_addr(memory[base])
     assert head == EMPTY, ("free-list terminal pointer", head)
     complete = set(words(oracle.free))
     for addr in oracle.released - complete:
@@ -290,9 +301,9 @@ class Harness:
     expected_head = before[2]
     if accepted is not None and link:
       expected_head = accepted.write_addr
-      assert accepted.data == before[2], "link must contain the old free head"
+      assert accepted.data == link_word(before[2]), "link payload must contain the old free head"
     elif response is not None and pop:
-      expected_head = response.value
+      expected_head = link_addr(response.value)
     assert after[2] == expected_head, ("free_head metadata/response edge", after[2], expected_head)
     bump = after[0] - before[0]
     assert bump >= 0 and bump % 2 == 0
@@ -480,7 +491,7 @@ def run_cases(cases):
 
 def test_minimum_schedule():
   stamp = Transaction("stamp", 1, 0, FREED)
-  link = Transaction("link", write_addr=0, data=EMPTY)
+  link = Transaction("link", write_addr=0, data=link_word(EMPTY))
   pop = Transaction("pop", read_addr=0)
   assert minimum_schedule(4, [], (False, True)) == ((), 5)
   assert minimum_schedule(0, [stamp], (True,)) == ((0,), 2)
@@ -590,7 +601,7 @@ def test_individual_word_reuse():
     await h.alloc(1)  # Two unrelated halves cannot form a reusable pair.
     assert h.oom and len(h.heap.accepted) == before
     await h.free((0,))
-    assert h.oracle.free == [0] and h.heap.words[0] == EMPTY
+    assert h.oracle.free == [0] and h.heap.words[0] == link_word(EMPTY)
     assert await h.alloc(1) == (0,)
     assert h.heap.words[0] != FREED and h.heap.words[1] != FREED
     await h.free((3,))
@@ -651,8 +662,8 @@ def test_free_acceptance_edges():
     assert h.heap.accepted == [Transaction("stamp", 3, 2, FREED), Transaction("stamp", 1, 0, FREED, word=1)]
     await h.free((1, 3))  # Consecutive full pairs require a link between stamps.
     assert [tx.payload for tx in h.heap.accepted[2:]] == [
-      ("stamp", 2, 3, FREED), ("link", None, 2, EMPTY),
-      ("stamp", 0, 1, FREED), ("link", None, 0, 2),
+      ("stamp", 2, 3, FREED), ("link", None, 2, link_word(EMPTY)),
+      ("stamp", 0, 1, FREED), ("link", None, 0, link_word(2)),
     ]
     await h.free((4, 5))  # Same pair, odd half stamped first.
     await h.free((7, 6))  # Same pair, even half stamped first.

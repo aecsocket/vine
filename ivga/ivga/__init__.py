@@ -32,8 +32,15 @@ class Tag(_enum.Enum, shape=3):
   NONE = 0b000
   """No valid port at this address.
 
-  `payload` and `label` are all zeroes if this is a freshly allocated port,
-  or all ones if this is a just-freed port."""
+  This tag is used for runtime metadata for values which aren't actually real
+  ports; specifically:
+  - if this word is fresh memory that has never been written to, `payload` and
+    `label` are all zeroes.
+  - if this word has just been freed by the allocator, `payload` and `label`
+    are all ones.
+  - if this word is being used by the allocator to store the address of the next
+    free word in the free list, `payload` stores the address to the next word
+    and `label` is all zeroes."""
 
   WIRE = 0b001
   """Wire which joins to another port at address `payload`.
@@ -83,6 +90,12 @@ class Port(_data.Struct):
       "payload": 0,
       "label": 0,
     }, Port)
+
+  @staticmethod
+  def with_addr(addr):
+    # Extend/truncate the address to the payload width without a temporary signal.
+    payload = _am.Cat(_am.Value.cast(addr), _am.Const(0, 45))[:45]
+    return Port(_am.Cat(_am.Const(Tag.NONE, 3), payload, _am.Const(0, 16)))
 
   @staticmethod
   def freed():

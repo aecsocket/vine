@@ -92,7 +92,7 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
   def heap_request(ctx):
     return (ctx.get(dut.heap.read), ctx.get(dut.heap.write),
             ctx.get(dut.heap.read_addr), ctx.get(dut.heap.write_addr),
-            ctx.get(dut.heap.write_data))
+            ctx.get(dut.heap.write_data.as_value()))
 
   async def heap_service(ctx):
     while True:
@@ -110,12 +110,12 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
       if write:
         heap[write_addr] = data
       heap_ops.append(request)
-      ctx.set(dut.heap.read_data, old if read else POISON)
+      ctx.set(dut.heap.read_data.as_value(), old if read else POISON)
       ctx.set(dut.heap.done, True)
       assert heap_request(ctx) == request, "heap request changed during acknowledgement"
       await ctx.tick()
       ctx.set(dut.heap.done, False)
-      ctx.set(dut.heap.read_data, POISON)
+      ctx.set(dut.heap.read_data.as_value(), POISON)
 
   async def alloc_service(ctx):
     while True:
