@@ -19,8 +19,9 @@ from .linker import Linker
 class Runtime(wiring.Component):
   """Graft an entry net, then reduce its worklist one interaction at a time.
 
-  Before pulsing `start`, reserve the program's pages through `pages`, upload
-  its words through `heap`, and initialize any storage referenced by `root_port`.
+  Reserve the program's prefix pages with `reserved_pages` at construction,
+  or allocate them through `pages` before pulsing `start`. Initialize the program
+  words in BRAM or through `heap`, and any storage referenced by `root_port`.
   `pairs` is available for allocating that root storage. These host interfaces
   are disabled while busy; finish all host transactions before starting.
 
@@ -36,7 +37,7 @@ class Runtime(wiring.Component):
   busy: Out(1)
   done: Out(1)
   failed: Out(1)
-  graft_error: Out(1)
+
   halted: Out(1)
   fault: Out(FaultPort())
 
@@ -44,9 +45,9 @@ class Runtime(wiring.Component):
   pages: In(PageAllocPort())
   pairs: In(PairAllocPort())
 
-  def __init__(self, *, active_depth: int = 128):
+  def __init__(self, *, active_depth: int = 128, reserved_pages: int = 0):
     self.memory = Heap()
-    self.page_alloc = PageAlloc(CAPACITY // PAGE_SIZE)
+    self.page_alloc = PageAlloc(n_pages=CAPACITY // PAGE_SIZE, reserved_pages=reserved_pages)
     self.pair_alloc = PairAlloc()
     self.active = Stack(Port2, depth=active_depth)
     self.interact = Interact()
@@ -92,13 +93,13 @@ class Runtime(wiring.Component):
       if name == "oom":
         events = events | (self.entry_grafter.done & self.entry_grafter.oom)
         events = events | (self.interact.grafter.done & self.interact.grafter.oom)
+      elif name == "bad_graft":
+        events = events | (self.entry_grafter.done & self.entry_grafter.error)
+        events = events | (self.interact.grafter.done & self.interact.grafter.error)
       m.d.sync += latched.eq(latched | events)
       fault_bits.append(latched)
-    for grafter in (self.entry_grafter, self.interact.grafter):
-      with m.If(grafter.done & grafter.error):
-        m.d.sync += self.graft_error.eq(True)
     m.d.sync += self.halted.eq(self.halted | (self.busy & self.fault.halt))
-    m.d.comb += self.failed.eq(Cat(*fault_bits, self.graft_error, self.halted).any())
+    m.d.comb += self.failed.eq(Cat(*fault_bits, self.halted).any())
     for source in fault_sources:
       m.d.comb += source.fault.halt.eq(self.fault.halt | self.failed)
 

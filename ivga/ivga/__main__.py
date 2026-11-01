@@ -1,24 +1,31 @@
 import argparse
 import subprocess
 from pathlib import Path
+from typing import override
 
 from amaranth.build.run import LocalBuildProducts
+from amaranth.hdl._xfrm import FragmentTransformer, StatementTransformer
 from amaranth_boards.arty_a7 import ArtyA7_100Platform
 
-from ivga.slop.top_slop import Processor as SlopProcessor
 from ivga.top import Processor
 
 BUILD_DIR = "build/arty_a7_100t"
-SLOP_BUILD_DIR = "build/arty_a7_100t_slop"
+
+
+class _StripProperties(FragmentTransformer, StatementTransformer):
+  """Keep verification properties in RTL, but omit them from FPGA synthesis."""
+
+  # Amaranth's visitor accepts statement lists, despite its narrower inferred return type.
+  @override
+  def on_Property(self, stmt):  # pyright: ignore[reportIncompatibleMethodOverride]
+    return ()
+
 
 def main():
   parser = argparse.ArgumentParser(
     description="Toolchain for the FPGA design",
   )
-  _ = parser.add_argument(
-    "--slop", action="store_true",
-    help="Use the interactive statistics harness instead of top.py",
-  )
+
   subparsers = parser.add_subparsers(dest="command", required=True)
 
   build = subparsers.add_parser(
@@ -44,12 +51,12 @@ def main():
   args = parser.parse_args()
 
   platform = ArtyA7_100Platform()
-  build_dir = SLOP_BUILD_DIR if args.slop else BUILD_DIR
+
 
   if args.command == "build":
     platform.build(
-      SlopProcessor() if args.slop else Processor(),
-      build_dir=build_dir,
+      _StripProperties()(Processor()),
+      build_dir=BUILD_DIR,
       do_program=args.program
     )
 
@@ -58,14 +65,14 @@ def main():
       [
         "less",
         "--quit-if-one-screen",
-        str(Path(build_dir) / "top_utilization_place.rpt")
+        str(Path(BUILD_DIR) / "top_utilization_place.rpt")
       ],
       check=True,
     )
 
   elif args.command == "program":
     platform.toolchain_program(
-      LocalBuildProducts(build_dir),
+      LocalBuildProducts(BUILD_DIR),
       name="top",
     )
 

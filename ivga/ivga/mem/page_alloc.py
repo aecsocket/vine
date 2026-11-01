@@ -75,12 +75,13 @@ class PageAlloc(wiring.Component):
   control: In(PageAllocPort())
   heap: Out(HeapPort())
 
-  def __init__(self, n_pages: int):
+  def __init__(self, *, n_pages: int, reserved_pages: int = 0):
     n_words = n_pages * PAGE_SIZE
     assert 0 < n_words <= ADDR_MAX + 1
+    assert 0 <= reserved_pages <= n_pages
 
     self.n_pages = n_pages
-    self.empty_id = Signal(range(n_pages + 1))
+    self.empty_id = Signal(range(n_pages + 1), init=reserved_pages)
     self.free_head_id = Signal(PageId)
     self.free_count = Signal(range(n_pages + 1))
     super().__init__()

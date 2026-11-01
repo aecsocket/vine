@@ -59,7 +59,7 @@ class System:
   def __init__(self, n_pages, *, shared=False):
     self.n_pages = n_pages
     self.m = m = Module()
-    self.pages = m.submodules.pages = PageAlloc(n_pages)
+    self.pages = m.submodules.pages = PageAlloc(n_pages=n_pages)
     self.pairs = m.submodules.pairs = PairAlloc()
     self.heap = m.submodules.heap = Heap()
     self.arb = m.submodules.heap_arb = HeapArbiter(2)

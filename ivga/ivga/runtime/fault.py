@@ -9,6 +9,8 @@ class FaultPort(wiring.Signature):
       "halt": In(1),
       # machine ran out of memory
       "oom": Out(1),
+      # graft template was malformed or could not be fully linked
+      "bad_graft": Out(1),
       # attempted to push active pair onto the worklist,
       # but the stack was full
       "active_full": Out(1),

@@ -8,7 +8,7 @@ PERIOD = 1e-6
 
 m = Module()
 heap = m.submodules.heap = Heap()
-dut = m.submodules.alloc = PageAlloc(8)
+dut = m.submodules.alloc = PageAlloc(n_pages=8)
 wiring.connect(m, dut.heap, heap.control)
 
 async def testbench_foo(ctx):

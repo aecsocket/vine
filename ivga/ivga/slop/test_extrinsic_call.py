@@ -75,7 +75,7 @@ class System:
     self.interact = m.submodules.interact = Interact()
     self.link = m.submodules.host_link = Linker()
     self.heap = m.submodules.heap = Heap()
-    self.pages = m.submodules.pages = PageAlloc(n_pages)
+    self.pages = m.submodules.pages = PageAlloc(n_pages=n_pages)
     self.pairs = m.submodules.pairs = PairAlloc()
     self.stack = m.submodules.stack = Stack(Port2, depth=8)
     self.heap_arb = m.submodules.heap_arb = HeapArbiter(5)
