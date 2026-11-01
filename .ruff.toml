@@ -1,4 +1,7 @@
 indent-width = 2
 
+[lint]
+extend-select = ["PLC0415", "E402"]
+
 [format]
 indent-style = "space"

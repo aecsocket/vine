@@ -1,7 +1,7 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
-from amflow import Flow, expand
+from amflow import Flow, ValueLike, expand
 from ivga.extrinsic import EXT_FNS, FN_ID_MASK, SWAP_BIT, TY_IDS, ext_val_label_is_copy
 from ivga.extrinsic.common import ExtFnContext
 from ivga.mem.heap import HeapArbiter, HeapPort
@@ -32,6 +32,18 @@ class InteractPort(wiring.Signature):
       "stat_extrinsic": In(Stat),
       "stat_reset": Out(1),
     })
+
+  @staticmethod
+  def interact(f: Flow, interact, *, a: ValueLike, b: ValueLike) -> None:
+    accepted = Signal()
+    f.d.comb += [
+      interact.req_interact.eq(~accepted),
+      interact.req_a.eq(a),
+      interact.req_b.eq(b),
+    ]
+    f.d.sync += accepted.eq(accepted | interact.granted)
+    f.d.until += accepted & interact.done
+    f.d.on_done += accepted.eq(False)
 
 LINKERS = 8
 
