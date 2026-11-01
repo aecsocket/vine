@@ -5,7 +5,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, ValueLike, expand
 from ivga.mem.heap import HeapPort
-from ivga.mem.pair_alloc import AllocPort
+from ivga.mem.pair_alloc import PairAllocPort
 from ivga.mem.stack import StackPort
 
 from ivga import Port, Port2, Stat, Tag, flatten
@@ -59,7 +59,7 @@ class LinkerPort(wiring.Signature):
 class Linker(wiring.Component):
   control: In(LinkerPort())
   heap: Out(HeapPort())
-  alloc: Out(AllocPort())
+  alloc: Out(PairAllocPort())
   active: Out(StackPort(Port2))
   fault: Out(FaultPort())
 
@@ -149,7 +149,7 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
     # so B is the same wire as A.
     # so we just free `A.payload`, and don't do any real connecting.
     f.d.on_done += linker.done.eq(True)
-    yield AllocPort.free(f, linker.alloc, addr=wire.payload)
+    yield PairAllocPort.free(f, linker.alloc, addr=wire.payload)
     f.Break()
   with f.Else():
     # swap_target(A as Wire, B)
@@ -169,7 +169,7 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
         next_a.eq(previous),
         next_b.eq(other),
       ]
-      yield AllocPort.free(f, linker.alloc, addr=wire.payload)
+      yield PairAllocPort.free(f, linker.alloc, addr=wire.payload)
 
 def follow(f: Flow, linker: Linker, p):
   p = f.capture(p)
@@ -182,6 +182,6 @@ def follow(f: Flow, linker: Linker, p):
       f.Break()
     with f.Else():
       f.d.on_done += p.eq(q)
-      yield AllocPort.free(f, linker.alloc, addr=p.payload)
+      yield PairAllocPort.free(f, linker.alloc, addr=p.payload)
 
   return p

@@ -1,12 +1,13 @@
 from amaranth import *
 from amaranth.lib import wiring
-from amaranth.lib.data import ArrayLayout
+from amaranth.lib.data import ArrayLayout, Struct
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, ValueLike, expand
 from ivga.mem.heap import HeapPort
+from ivga.mem.page_alloc import PAGE_SHIFT, PAGE_SIZE, PageAllocPort, PageId
 from ivga.util.arbiter import make_arbiter_type
 
-from ivga import ADDR_MAX, Addr, Port, Stat, flatten
+from ivga import WORD_WIDTH, Addr, Port, Stat, flatten
 
 ALLOC_LANES = 4
 """How many pairs (2 words) can be allocated at once."""
@@ -14,9 +15,31 @@ ALLOC_LANES = 4
 FREE_LANES = 2
 """How many single words can be freed at once."""
 
-ADDR_EMPTY = Const(ADDR_MAX, Addr)
+PAIR_SHIFT = PAGE_SHIFT - 1
+PAIRS_PER_PAGE = PAGE_SIZE // 2 - 1
+"""The first pair is reserved for page metadata."""
 
-class AllocPort(wiring.Signature):
+PageRef = unsigned(PageId.width + 1)
+PAGE_NONE = 1 << PageId.width
+_HEADER_BITS = PAIR_SHIFT * 2 + (PAIR_SHIFT + 1) + PageRef.width
+assert PAIRS_PER_PAGE >= ALLOC_LANES and _HEADER_BITS <= WORD_WIDTH
+
+
+class PageHeader(Struct):
+  """Stored in word zero; word one holds the previous partial-page reference.
+
+  Slot zero is metadata/the local-list sentinel. A half-freed pair still counts
+  as used; only fully freed pairs enter the page-local free list.
+  """
+
+  used: unsigned(PAIR_SHIFT)
+  next_pair: unsigned(PAIR_SHIFT + 1)
+  free_head: unsigned(PAIR_SHIFT)
+  next_page: PageRef
+  padding: unsigned(WORD_WIDTH - _HEADER_BITS)
+
+
+class PairAllocPort(wiring.Signature):
   def __init__(self):
     super().__init__({
       "req_alloc": Out(range(ALLOC_LANES + 1)),
@@ -39,11 +62,11 @@ class AllocPort(wiring.Signature):
   def alloc(f: Flow, alloc, *, n_pairs: ValueLike) -> tuple[Signal, Signal]:
     accepted = Signal()
     bases, oom = Signal.like(alloc.alloc_bases), Signal.like(alloc.oom)
-
-    f.d.comb += alloc.req_alloc.eq(Mux(accepted, 0, n_pairs))
+    count = Value.cast(n_pairs)
+    f.d.comb += alloc.req_alloc.eq(Mux(accepted, 0, count))
     f.d.sync += [
       accepted.eq(accepted | alloc.granted),
-      Assert(accepted | (Value.cast(n_pairs) >= 1), "Allocation requires at least one pair"),
+      Assert(accepted | ((count >= 1) & (count <= ALLOC_LANES)), "Invalid pair allocation count"),
     ]
     f.d.until += accepted & alloc.done
     f.d.on_done += [
@@ -56,163 +79,257 @@ class AllocPort(wiring.Signature):
   @staticmethod
   def free_all(f: Flow, alloc, *, n_words: ValueLike, addrs: ValueLike) -> None:
     accepted = Signal()
-
+    count = Value.cast(n_words)
     f.d.comb += [
-      alloc.req_free.eq(Mux(accepted, 0, n_words)),
+      alloc.req_free.eq(Mux(accepted, 0, count)),
       alloc.free_addrs.eq(addrs),
     ]
     f.d.sync += [
       accepted.eq(accepted | alloc.granted),
-      Assert(accepted | (Value.cast(n_words) >= 1), "Free requires at least one word"),
+      Assert(accepted | ((count >= 1) & (count <= FREE_LANES)), "Invalid pair free count"),
     ]
     f.d.until += accepted & alloc.done
     f.d.on_done += accepted.eq(False)
 
   @staticmethod
   def free(f: Flow, alloc, *, addr: ValueLike) -> None:
-    AllocPort.free_all(f, alloc, n_words=1, addrs=addr)
+    PairAllocPort.free_all(f, alloc, n_words=1, addrs=addr)
 
 
-class Alloc(wiring.Component):
-  control: In(AllocPort())
+class PairAlloc(wiring.Component):
+  """Subdivide shared pages into pairs and return completely empty pages.
+
+  Wire `pages` to PageAlloc and arbitrate both allocators' heap ports. Allocated
+  words are not initialized: callers must replace both old words before use/free.
+  `free_count` counts reusable words in owned pages, including unissued slots;
+  `live_words` counts outstanding individual words, including stranded halves.
+  Allocation/free stats count words; `stat_peak` is a live-word high watermark.
+  """
+
+  control: In(PairAllocPort())
+  pages: Out(PageAllocPort())
   heap: Out(HeapPort())
 
-  def __init__(self, capacity: int):
-    assert 0 < capacity <= ADDR_MAX
-    assert capacity % 2 == 0
-
-    self.capacity = capacity
-    self.empty = Signal(range(capacity + 1))
-    self.free_head = Signal(Addr, init=ADDR_EMPTY)
-    self.free_count = Signal(range(capacity + 1))
+  def __init__(self):
+    self.partial_head = Signal(PageRef, init=PAGE_NONE)
+    self.pages_owned = Signal(range((1 << PageId.width) + 1))
+    self.free_count = Signal(Addr)
+    self.live_words = Signal(Addr)
     super().__init__()
     flatten(self, self.control)
 
   def elaborate(self, platform):
-    m, alloc = Module(), self
-    m.d.sync += [
-      alloc.done.eq(False),
-      alloc.oom.eq(False),
-    ]
-    expand(m, lambda f: program(f, alloc))
+    m = Module()
+    m.d.sync += [self.done.eq(False), self.oom.eq(False)]
+    expand(m, lambda f: program(f, self))
 
-    with m.If(alloc.empty > alloc.stat_peak):
-      m.d.sync += alloc.stat_peak.eq(alloc.empty)
-    with m.If(alloc.stat_reset):
+    with m.If(self.live_words > self.stat_peak):
+      m.d.sync += self.stat_peak.eq(self.live_words)
+    with m.If(self.stat_reset):
       m.d.sync += [
-        alloc.stat_allocs.eq(0),
-        alloc.stat_frees.eq(0),
-        alloc.stat_peak.eq(0),
+        self.stat_allocs.eq(0),
+        self.stat_frees.eq(0),
+        self.stat_peak.eq(0),
       ]
-
     return m
 
-def program(f: Flow, alloc: Alloc):
-  f.d.comb += alloc.granted.eq(True)
-  available = alloc.capacity - alloc.empty + alloc.free_count
 
-  with f.If(alloc.req_alloc > 0):
-    # allocate `req_alloc` word-pairs of memory
-    f.d.sync += Assert(alloc.req_alloc <= ALLOC_LANES, "Allocation request exceeds lane count")
+def program(f: Flow, pairs: PairAlloc):
+  f.d.comb += pairs.granted.eq(True)
+  with f.If(pairs.req_alloc != 0):
+    f.d.sync += Assert(pairs.req_alloc <= ALLOC_LANES, "Allocation request exceeds lane count")
+    yield from do_alloc(f, pairs)
+  with f.Elif(pairs.req_free != 0):
+    f.d.sync += Assert(pairs.req_free <= FREE_LANES, "Free request exceeds lane count")
+    yield from free(f, pairs)
 
-    with f.If((alloc.req_alloc * 2) > available):
-      f.d.sync += [
-        alloc.done.eq(True),
-        alloc.oom.eq(True),
-      ]
-      yield
-    with f.Else():
-      yield from do_alloc(f, alloc)
 
-  with f.Elif(alloc.req_free > 0):
-    # free `req_free` words of memory
-    f.d.sync += Assert(alloc.req_free <= FREE_LANES, "Free request exceeds lane count")
-    yield from free(f, alloc)
+def write_header(f: Flow, pairs: PairAlloc, page, old, **fields):
+  updated = Signal(PageHeader)
+  f.d.comb += updated.eq(old)
+  for name, value in fields.items():
+    f.d.comb += getattr(updated, name).eq(value)
+  yield HeapPort.write(f, pairs.heap, addr=page << PAGE_SHIFT, write=updated.as_value())
 
-def do_alloc(f: Flow, alloc: Alloc):
-  # general idea: allocate from the free list if available,
-  # else bump allocate.
-  pairs_to_alloc = f.capture(alloc.req_alloc)
 
-  with f.While((pairs_to_alloc != 0) & (alloc.free_head != ADDR_EMPTY)):
-    # prioritize taking from the free list
-    # one free list entry represents *two* allocations
-    # (since we always allocate in multiples of 2):
-    # - `free_head` is the 1st allocated word
-    # - `free_head ^ 1` is the 2nd allocated word
-    #   the caller is responsible for computing this
-    top_idx = (pairs_to_alloc - 1).as_unsigned()
-    f.d.sync += alloc.alloc_bases[top_idx].eq(alloc.free_head)
-    next_free_head = yield HeapPort.read(f, alloc.heap, addr=alloc.free_head)
+def write_previous(f: Flow, pairs: PairAlloc, page, previous):
+  yield HeapPort.write(f, pairs.heap, addr=(page << PAGE_SHIFT) + 1, write=previous)
 
-    f.d.on_done += [
-      pairs_to_alloc.eq(pairs_to_alloc - 1),
-      alloc.free_count.eq(alloc.free_count - 2),
-      alloc.stat_allocs.eq(alloc.stat_allocs + 2),
-    ]
-    f.d.sync += alloc.free_head.eq(Port(next_free_head).payload)
+
+def acquire_page(f: Flow, pairs: PairAlloc, failed):
+  page_ids, oom = yield PageAllocPort.alloc(f, pairs.pages, n_pages=1)
+  with f.If(oom):
+    f.d.sync += failed.eq(True)
     yield
-
-  with f.If(pairs_to_alloc != 0):
-    # consumed the whole free list but we still haven't allocated enough;
-    # take from the bump allocator.
-    # we've already asserted that we have enough free capacity.
-    for lane in range(ALLOC_LANES):
-      lane_base = alloc.alloc_bases[lane]
-      f.d.sync += lane_base.eq(
-        Mux(lane < pairs_to_alloc, alloc.empty + lane * 2, lane_base)
-      )
-    f.d.sync += [
-      alloc.empty.eq(alloc.empty + pairs_to_alloc * 2),
-      alloc.stat_allocs.eq(alloc.stat_allocs + pairs_to_alloc * 2),
+  with f.Else():
+    initial = Const({
+      "used": 0,
+      "next_pair": 1,
+      "free_head": 0,
+      "next_page": PAGE_NONE,
+    }, PageHeader)
+    yield from write_previous(f, pairs, page_ids[0], PAGE_NONE)
+    f.d.on_done += [
+      pairs.partial_head.eq(page_ids[0]),
+      pairs.pages_owned.eq(pairs.pages_owned + 1),
+      pairs.free_count.eq(pairs.free_count + PAIRS_PER_PAGE * 2),
     ]
+    yield HeapPort.write(f, pairs.heap, addr=page_ids[0] << PAGE_SHIFT, write=initial.as_value())
 
-  f.d.sync += alloc.done.eq(True)
+
+def commit_pair(f: Flow, pairs: PairAlloc, remaining, page, header, index, *, free_head, next_pair):
+  f.d.on_done += [
+    pairs.alloc_bases[(remaining - 1).as_unsigned()].eq((page << PAGE_SHIFT) + index * 2),
+    pairs.free_count.eq(pairs.free_count - 2),
+    remaining.eq(remaining - 1),
+  ]
+  yield from write_header(
+    f, pairs, page, header,
+    used=header.used + 1, free_head=free_head, next_pair=next_pair,
+  )
+  with f.If(header.used == PAIRS_PER_PAGE - 1):
+    yield from unlink_page(f, pairs, page, header)
+
+
+def reserve_pair(f: Flow, pairs: PairAlloc, remaining):
+  page = f.capture(pairs.partial_head)
+  raw = yield HeapPort.read(f, pairs.heap, addr=page << PAGE_SHIFT)
+  header = PageHeader(raw)
+  index = f.capture(Mux(header.free_head != 0, header.free_head, header.next_pair))
+  f.d.sync += [
+    Assert(header.used < PAIRS_PER_PAGE, "Allocating from a full node page"),
+    Assert((index >= 1) & (index <= PAIRS_PER_PAGE), "Invalid page-local pair index"),
+  ]
+  with f.If(header.free_head != 0):
+    next_free = yield HeapPort.read(f, pairs.heap, addr=(page << PAGE_SHIFT) + index * 2)
+    yield from commit_pair(
+      f, pairs, remaining, page, header, index,
+      free_head=next_free[:PAIR_SHIFT], next_pair=header.next_pair,
+    )
+  with f.Else():
+    yield from commit_pair(
+      f, pairs, remaining, page, header, index,
+      free_head=0, next_pair=header.next_pair + 1,
+    )
+
+
+def do_alloc(f: Flow, pairs: PairAlloc):
+  requested = f.capture(pairs.req_alloc)
+  remaining = f.capture(pairs.req_alloc)
+  failed = f.capture(False)
+
+  with f.While((remaining != 0) & ~failed):
+    with f.If(pairs.partial_head == PAGE_NONE):
+      yield from acquire_page(f, pairs, failed)
+    with f.If(~failed):
+      yield from reserve_pair(f, pairs, remaining)
+
+  with f.If(failed):
+    # Reservations are private until done. Undo them without counting user frees.
+    undo = f.capture(remaining)
+    with f.While(undo < requested):
+      # Aborted reservations were never initialized by the caller. Restore the
+      # odd-half marker before publishing the even half as a free-list link.
+      yield HeapPort.write(
+        f, pairs.heap,
+        addr=Addr.other_half(pairs.alloc_bases[undo]),
+        write=Port.freed().as_value(),
+      )
+      yield from release_pair(f, pairs, pairs.alloc_bases[undo])
+      f.d.sync += undo.eq(undo + 1)
+      yield
+    f.d.sync += [pairs.alloc_bases.eq(0), pairs.oom.eq(True)]
+  with f.Else():
+    f.d.sync += [
+      pairs.stat_allocs.eq(pairs.stat_allocs + requested * 2),
+      pairs.live_words.eq(pairs.live_words + requested * 2),
+    ]
+  f.d.sync += pairs.done.eq(True)
   yield
 
-def free(f: Flow, alloc: Alloc):
-  remaining = f.capture(alloc.req_free)
-  addrs = f.capture(alloc.free_addrs)
+
+def unlink_page(f: Flow, pairs: PairAlloc, page, header):
+  with f.If(pairs.partial_head == page):
+    with f.If(header.next_page != PAGE_NONE):
+      f.d.on_done += pairs.partial_head.eq(header.next_page)
+      yield from write_previous(f, pairs, header.next_page, PAGE_NONE)
+    with f.Else():
+      f.d.sync += pairs.partial_head.eq(PAGE_NONE)
+      yield
+  with f.Else():
+    previous_raw = yield HeapPort.read(f, pairs.heap, addr=(page << PAGE_SHIFT) + 1)
+    previous = previous_raw[:PageRef.width]
+    f.d.sync += Assert(previous < PAGE_NONE, "Invalid previous partial-page reference")
+    raw = yield HeapPort.read(f, pairs.heap, addr=previous << PAGE_SHIFT)
+    previous_header = PageHeader(raw)
+    f.d.sync += Assert(previous_header.next_page == page, "Broken partial-page back link")
+    yield from write_header(f, pairs, previous, previous_header, next_page=header.next_page)
+    with f.If(header.next_page != PAGE_NONE):
+      yield from write_previous(f, pairs, header.next_page, previous)
+
+
+def release_pair(f: Flow, pairs: PairAlloc, addr):
+  page = f.capture(addr >> PAGE_SHIFT)
+  index = f.capture(addr[1:PAGE_SHIFT])
+  raw = yield HeapPort.read(f, pairs.heap, addr=page << PAGE_SHIFT)
+  header = PageHeader(raw)
+  f.d.sync += [
+    Assert(index != 0, "Cannot free page metadata"),
+    Assert(header.used != 0, "Freeing a pair from an empty page"),
+  ]
+
+  with f.If(header.used == 1):
+    yield from unlink_page(f, pairs, page, header)
+    f.d.on_done += [
+      pairs.pages_owned.eq(pairs.pages_owned - 1),
+      pairs.free_count.eq(pairs.free_count - (PAIRS_PER_PAGE - 1) * 2),
+    ]
+    yield PageAllocPort.free(f, pairs.pages, n_pages=1, page_ids=page)
+  with f.Else():
+    yield HeapPort.write(
+      f, pairs.heap,
+      addr=(page << PAGE_SHIFT) + index * 2,
+      write=header.free_head,
+    )
+    with f.If(header.used == PAIRS_PER_PAGE):
+      yield from write_previous(f, pairs, page, PAGE_NONE)
+      with f.If(pairs.partial_head != PAGE_NONE):
+        yield from write_previous(f, pairs, pairs.partial_head, page)
+    next_page = Mux(header.used == PAIRS_PER_PAGE, pairs.partial_head, header.next_page)
+    with f.If(header.used == PAIRS_PER_PAGE):
+      f.d.on_done += pairs.partial_head.eq(page)
+    f.d.on_done += pairs.free_count.eq(pairs.free_count + 2)
+    yield from write_header(
+      f, pairs, page, header,
+      used=header.used - 1, free_head=index, next_page=next_page,
+    )
+
+
+def free(f: Flow, pairs: PairAlloc):
+  remaining = f.capture(pairs.req_free)
+  addrs = f.capture(pairs.free_addrs)
   freed = Port.freed().as_value()
 
   with f.While(remaining != 0):
     addr = addrs[(remaining - 1).as_unsigned()]
-    left = Addr.left_half(addr)
-
-    # store a marker saying this word is free now,
-    # and read the other half of this pair
-    # to see if we've already freed the other half
-    other = HeapPort.read(f, alloc.heap, addr=Addr.other_half(addr))
-    yield HeapPort.write(f, alloc.heap, addr=addr, write=freed)
-
-    f.d.on_done += [
-      alloc.stat_frees.eq(alloc.stat_frees + 1),
-      remaining.eq(remaining - 1),
-    ]
+    f.d.sync += Assert(addr[1:PAGE_SHIFT] != 0, "Cannot free page metadata")
+    other = HeapPort.read(f, pairs.heap, addr=Addr.other_half(addr))
+    yield HeapPort.write(f, pairs.heap, addr=addr, write=freed)
 
     with f.If(other == freed):
-      # we previously freed the other half of this pair,
-      # and we just freed this half, so the pair is now free;
-      # mark it as such.
-      # if we haven't freed the other half yet,
-      # then we don't add it to the free list,
-      # cause this pair isn't safe to reuse yet.
-      f.d.on_done += [
-        # add the *left* half to the free list,
-        # not the address we just freed,
-        # since we might have freed the non-left word,
-        # breaking the free list precondition.
-        alloc.free_head.eq(left),
-        alloc.free_count.eq(alloc.free_count + 2),
-      ]
-      HeapPort.write(f, alloc.heap, addr=left, write=Port.with_addr(alloc.free_head))
+      yield from release_pair(f, pairs, addr)
 
+    f.d.sync += Assert(pairs.live_words != 0, "Freeing without a live word")
+    f.d.on_done += [
+      pairs.stat_frees.eq(pairs.stat_frees + 1),
+      pairs.live_words.eq(pairs.live_words - 1),
+      remaining.eq(remaining - 1),
+      pairs.done.eq(remaining == 1),
+    ]
     yield
 
-  f.d.sync += alloc.done.eq(True)
-  yield
 
-AllocArbiter = make_arbiter_type(
-  AllocPort,
+PairAllocArbiter = make_arbiter_type(
+  PairAllocPort,
   lambda client: (client.req_alloc != 0) | (client.req_free != 0),
 )

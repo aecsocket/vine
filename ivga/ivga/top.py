@@ -3,7 +3,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from ivga import PORT_ERASER, Port
-from ivga.mem.pair_alloc import Alloc
+from ivga.mem.pair_alloc import PairAlloc
 from ivga.mem.heap import make_heap
 from ivga.runtime.interact import Interact
 from ivga.runtime.link import Link
@@ -45,7 +45,7 @@ class Processor(wiring.Component):
     heap_read = heap.read_port()
     heap_write = heap.write_port()
     m.submodules.heap_arb = heap_arb = Arbiter()
-    m.submodules.alloc = alloc = Alloc(capacity=512)
+    m.submodules.alloc = alloc = PairAlloc(n_pairs=512)
     m.submodules.link = link = Link()
     m.submodules.interact = interact = Interact()
 

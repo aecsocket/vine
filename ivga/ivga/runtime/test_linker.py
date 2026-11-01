@@ -1,7 +1,7 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.sim import Simulator
-from ivga.mem.pair_alloc import ADDR_EMPTY, Alloc
+from ivga.mem.pair_alloc import ADDR_EMPTY, PairAlloc
 from ivga.mem.heap import Heap, HeapArbiter
 from ivga.mem.stack import Stack
 from ivga.runtime.linker import Linker
@@ -13,7 +13,7 @@ PERIOD = 1e-6
 m = Module()
 heap = m.submodules.heap = Heap()
 heap_arb = m.submodules.heap_arb = HeapArbiter(2)
-alloc = m.submodules.alloc = Alloc(8)
+alloc = m.submodules.alloc = PairAlloc(8)
 active = m.submodules.active = Stack(Port2, 8)
 dut = m.submodules.linker = Linker()
 wiring.connect(m, heap_arb.clients[0], alloc.heap)

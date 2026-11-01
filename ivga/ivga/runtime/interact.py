@@ -3,7 +3,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, expand
 from ivga.mem.heap import HeapArbiter, HeapPort
-from ivga.mem.pair_alloc import AllocArbiter, AllocPort
+from ivga.mem.pair_alloc import PairAllocArbiter, PairAllocPort
 from ivga.mem.stack import StackArbiter, StackPort
 from ivga.runtime.fault import FaultPort
 
@@ -33,14 +33,14 @@ LINKERS = 8
 class Interact(wiring.Component):
   control: In(InteractPort())
   heap: Out(HeapPort())
-  alloc: Out(AllocPort())
+  alloc: Out(PairAllocPort())
   active: Out(StackPort(Port2))
   fault: Out(FaultPort())
 
   def __init__(self):
     self.linkers = [Linker() for _ in range(LINKERS)]
     self.heap_arb = HeapArbiter(LINKERS + 1)
-    self.alloc_arb = AllocArbiter(LINKERS + 1)
+    self.alloc_arb = PairAllocArbiter(LINKERS + 1)
     self.active_arb = StackArbiter(LINKERS, Port2)
     super().__init__()
     flatten(self, self.control)
@@ -68,7 +68,7 @@ class Interact(wiring.Component):
     # so we need an extra client - ourselves.
     own_heap = self.own_heap = HeapPort().create()
     wiring.connect(m, heap_arb.clients[LINKERS], own_heap)
-    own_alloc = self.own_alloc = AllocPort().create()
+    own_alloc = self.own_alloc = PairAllocPort().create()
     wiring.connect(m, alloc_arb.clients[LINKERS], own_alloc)
 
     m.d.sync += interact.done.eq(False)
@@ -175,7 +175,7 @@ def copy(f: Flow, interact: Interact, a, b):
   ])
 
 def commute(f: Flow, interact: Interact, a, b):
-  bases, oom = yield AllocPort.alloc(f, interact.alloc, n_pairs=4)
+  bases, oom = yield PairAllocPort.alloc(f, interact.alloc, n_pairs=4)
   with f.If(oom):
     # TODO raise a fault
     f.d.sync += interact.done.eq(True)

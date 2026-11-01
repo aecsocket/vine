@@ -18,7 +18,7 @@ from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out
 
 from ivga import PORT_ERASER, PORT_INVALID, Port, Port2, Tag
-from ivga.mem.pair_alloc import Alloc
+from ivga.mem.pair_alloc import PairAlloc
 from ivga.mem.heap import make_heap
 from ivga.mem.stack import Stack
 from ivga.runtime.interact import Interact
@@ -83,7 +83,7 @@ class Processor(wiring.Component):
     self.uart_tx = Signal(init=1)
 
     self.heap = make_heap()
-    self.alloc = Alloc(capacity=512)
+    self.alloc = PairAlloc(n_pairs=512)
     self.link = Link()
     self.interact = Interact()
     self.active = Stack(Port2, depth=16)
