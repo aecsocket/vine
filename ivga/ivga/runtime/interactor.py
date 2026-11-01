@@ -24,6 +24,7 @@ class InteractorPort(wiring.Signature):
       "stat_annihilate": In(Stat),
       "stat_copy": In(Stat),
       "stat_commute": In(Stat),
+      "stat_graft": In(Stat),
       "stat_reset": Out(1),
     })
 
@@ -78,6 +79,7 @@ class Interactor(wiring.Component):
         interactor.stat_annihilate.eq(0),
         interactor.stat_copy.eq(0),
         interactor.stat_commute.eq(0),
+        interactor.stat_graft.eq(0),
       ]
 
     return m
@@ -89,7 +91,43 @@ def program(f: Flow, interactor: Interactor):
     a = f.capture(interactor.req_a)
     b = f.capture(interactor.req_b)
 
+    def ext_or_erase(tag):
+      return (tag == Tag.EXT_VAL) | (tag == Tag.ERASE)
+
+    def graft_or_erase(tag):
+      return (tag == Tag.GRAFT) | ext_or_erase(tag)
+
+    already_handled = (
+      (a.tag == Tag.WIRE)
+      | (b.tag == Tag.WIRE)
+      | (ext_or_erase(a.tag) & ext_or_erase(b.tag))
+      | (graft_or_erase(a.tag) & graft_or_erase(b.tag))
+    )
+
+    f.d.sync += Assert(
+      ~already_handled,
+      "Port pair sh ould have already been resolved by linker"
+    )
+
     with f.If(
+      (a.tag == Tag.GRAFT)
+      & (b.tag == Tag.COMB)
+      & (b.label != 0)
+    ):
+      yield from copy(f, interactor, a, b)
+    with f.Elif(
+      (a.tag == Tag.COMB)
+      & (b.tag == Tag.GRAFT)
+      & (a.label != 0)
+    ):
+      yield from copy(f, interactor, b, a)
+
+    with f.Elif(a.tag == Tag.GRAFT):
+      yield from graft(f, interactor, a, b)
+    with f.Elif(b.tag == Tag.GRAFT):
+      yield from graft(f, interactor, b, a)
+
+    with f.Elif(
       (a.tag == Tag.COMB)
       & (b.tag == Tag.COMB)
       & (a.label == b.label)
@@ -125,6 +163,17 @@ def annihilate(f: Flow, interactor: Interactor, a, b):
     (interactor.linkers[1], a2, b2),
   ])
 
+def copy(f: Flow, interactor: Interactor, a, b):
+  x, y = Port.aux(b)
+  f.d.on_done += [
+    interactor.done.eq(True),
+    interactor.stat_copy.eq(interactor.stat_copy + 1),
+  ]
+  yield LinkerPort.link_batch(f, [
+    (interactor.linkers[0], x, a),
+    (interactor.linkers[1], y, a),
+  ])
+
 def commute(f: Flow, interactor: Interactor, a, b):
   bases, oom = yield AllocPort.alloc(f, interactor.alloc, n_pairs=4)
   with f.If(oom):
@@ -149,6 +198,7 @@ def commute(f: Flow, interactor: Interactor, a, b):
     al, ar = Port.aux(a)
     bl, br = Port.aux(b)
 
+    # TODO: maybe just instantiate 4 linkers?
     yield LinkerPort.link_batch(f, [
       # link fresh wires
       (interactor.linkers[0], a1l, b1l),
@@ -163,13 +213,5 @@ def commute(f: Flow, interactor: Interactor, a, b):
       (interactor.linkers[7], br, a2p),
     ])
 
-def copy(f: Flow, interactor: Interactor, a, b):
-  x, y = Port.aux(b)
-  f.d.on_done += [
-    interactor.done.eq(True),
-    interactor.stat_copy.eq(interactor.stat_copy + 1),
-  ]
-  yield LinkerPort.link_batch(f, [
-    (interactor.linkers[0], x, a),
-    (interactor.linkers[1], y, a),
-  ])
+def graft(f: Flow, interactor: Interactor, a, b):
+  yield
