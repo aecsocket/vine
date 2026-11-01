@@ -39,7 +39,7 @@ class LinkerPort(wiring.Signature):
     f.d.on_done += accepted.eq(False)
 
   @staticmethod
-  def link_batch(f: Flow, linkers: Iterable[tuple["Linker", ValueLike, ValueLike]]):
+  def link_batch(f: Flow, linkers: Iterable[tuple["Linker | wiring.PureInterface", ValueLike, ValueLike]]):
     for linker, a, b in linkers:
       accepted = Signal()
       was_done = Signal()

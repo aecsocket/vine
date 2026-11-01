@@ -3,9 +3,11 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, expand
 from ivga.mem.heap import HeapArbiter, HeapPort
+from ivga.mem.page_alloc import PageAllocPort
 from ivga.mem.pair_alloc import PairAllocArbiter, PairAllocPort
 from ivga.mem.stack import StackArbiter, StackPort
 from ivga.runtime.fault import FaultPort
+from ivga.runtime.grafter import Grafter, GrafterPort
 
 from ivga import Addr, Port, Port2, Stat, Tag, flatten
 
@@ -33,15 +35,19 @@ LINKERS = 8
 class Interact(wiring.Component):
   control: In(InteractPort())
   heap: Out(HeapPort())
+  pages: Out(PageAllocPort())
   pairs: Out(PairAllocPort())
   active: Out(StackPort(Port2))
   fault: Out(FaultPort())
 
   def __init__(self):
     self.linkers = [Linker() for _ in range(LINKERS)]
-    self.heap_arb = HeapArbiter(LINKERS + 1)
-    self.pairs_arb = PairAllocArbiter(LINKERS + 1)
+    self.link_ports = [LinkerPort().create() for _ in range(LINKERS)]
+    self.grafting = Signal()
+    self.heap_arb = HeapArbiter(LINKERS + 2)
+    self.pairs_arb = PairAllocArbiter(LINKERS + 2)
     self.active_arb = StackArbiter(LINKERS, Port2)
+    self.grafter = Grafter()
     super().__init__()
     flatten(self, self.control)
 
@@ -61,6 +67,14 @@ class Interact(wiring.Component):
       wiring.connect(m, heap_arb.clients[i], linker.heap)
       wiring.connect(m, pairs_arb.clients[i], linker.alloc)
       wiring.connect(m, active_arb.clients[i], linker.active)
+      if i == 0:
+        # linker 0 is also used by the grafter when we're `graft`ing
+        with m.If(self.grafting):
+          wiring.connect(m, linker.control, self.grafter.linker)
+        with m.Else():
+          wiring.connect(m, linker.control, self.link_ports[i])
+      else:
+        wiring.connect(m, linker.control, self.link_ports[i])
 
     # all heap/alloc access is arb'd thru `heap_arb`/`pairs_arb`,
     # but some of our own interact code (eg in commutation)
@@ -68,8 +82,14 @@ class Interact(wiring.Component):
     # so we need an extra client - ourselves.
     own_heap = self.own_heap = HeapPort().create()
     wiring.connect(m, heap_arb.clients[LINKERS], own_heap)
-    own_alloc = self.own_alloc = PairAllocPort().create()
-    wiring.connect(m, pairs_arb.clients[LINKERS], own_alloc)
+    own_pairs = self.own_pairs = PairAllocPort().create()
+    wiring.connect(m, pairs_arb.clients[LINKERS], own_pairs)
+
+    # grafter unit also needs access
+    grafter = m.submodules.grafter = self.grafter
+    wiring.connect(m, heap_arb.clients[LINKERS + 1], grafter.heap)
+    wiring.connect(m, wiring.flipped(self.pages), grafter.pages)
+    wiring.connect(m, pairs_arb.clients[LINKERS + 1], grafter.pairs)
 
     expand(m, lambda f: program(f, interact))
 
@@ -94,7 +114,7 @@ def program(f: Flow, interact: Interact):
       return (tag == Tag.EXT_VAL) | (tag == Tag.ERASE)
 
     def graft_or_erase(tag):
-      return (tag == Tag.GRAFT) | ext_or_erase(tag)
+      return (tag == Tag.GRAFT) | (tag == Tag.ERASE)
 
     already_handled = (
       (a.tag == Tag.WIRE)
@@ -149,6 +169,23 @@ def program(f: Flow, interact: Interact):
       # Erase >-< B (B1, B2)
       # => (Erase >-< B1, Erase >-< B2)
       yield from copy(f, interact, a, b)
+    with f.Elif(b.tag == Tag.ERASE):
+      yield from copy(f, interact, b, a)
+
+    with f.Elif((a.tag == Tag.EXT_VAL) & (b.tag == Tag.COMB)):
+      yield from copy_ext_val(f, interact, a, b)
+    with f.Elif((b.tag == Tag.EXT_VAL) & (a.tag == Tag.COMB)):
+      yield from copy_ext_val(f, interact, b, a)
+
+    with f.Elif((a.tag == Tag.EXT_FN) & (b.tag == Tag.EXT_VAL)):
+      yield from call(f, interact, a, b)
+    with f.Elif((b.tag == Tag.EXT_FN) & (a.tag == Tag.EXT_VAL)):
+      yield from call(f, interact, b, a)
+
+    with f.Else():
+      # TODO: flag an invalid interaction and link both ports to erasers.
+      f.d.sync += Assert(False, "Invalid interaction")
+      yield
 
 def annihilate(f: Flow, interact: Interact, a, b):
   a1, a2 = Port.aux(a)
@@ -158,8 +195,8 @@ def annihilate(f: Flow, interact: Interact, a, b):
     interact.stat_annihilate.eq(interact.stat_annihilate + 1),
   ]
   yield LinkerPort.link_batch(f, [
-    (interact.linkers[0], a1, b1),
-    (interact.linkers[1], a2, b2),
+    (interact.link_ports[0], a1, b1),
+    (interact.link_ports[1], a2, b2),
   ])
 
 def copy(f: Flow, interact: Interact, a, b):
@@ -169,12 +206,12 @@ def copy(f: Flow, interact: Interact, a, b):
     interact.stat_copy.eq(interact.stat_copy + 1),
   ]
   yield LinkerPort.link_batch(f, [
-    (interact.linkers[0], x, a),
-    (interact.linkers[1], y, a),
+    (interact.link_ports[0], x, a),
+    (interact.link_ports[1], y, a),
   ])
 
 def commute(f: Flow, interact: Interact, a, b):
-  bases, oom = yield PairAllocPort.alloc(f, interact.pairs, n_pairs=4)
+  bases, oom = yield PairAllocPort.alloc(f, interact.own_pairs, n_pairs=4)
   with f.If(oom):
     # TODO raise a fault
     f.d.sync += interact.done.eq(True)
@@ -200,17 +237,32 @@ def commute(f: Flow, interact: Interact, a, b):
     # TODO: maybe just instantiate 4 linkers?
     yield LinkerPort.link_batch(f, [
       # link fresh wires
-      (interact.linkers[0], a1l, b1l),
-      (interact.linkers[1], a1r, b2l),
-      (interact.linkers[2], a2l, b1r),
-      (interact.linkers[3], a2r, b2r),
+      (interact.link_ports[0], a1l, b1l),
+      (interact.link_ports[1], a1r, b2l),
+      (interact.link_ports[2], a2l, b1r),
+      (interact.link_ports[3], a2r, b2r),
 
       # link node wires and freshly made ports
-      (interact.linkers[4], al, b1p),
-      (interact.linkers[5], ar, b2p),
-      (interact.linkers[6], bl, a1p),
-      (interact.linkers[7], br, a2p),
+      (interact.link_ports[4], al, b1p),
+      (interact.link_ports[5], ar, b2p),
+      (interact.link_ports[6], bl, a1p),
+      (interact.link_ports[7], br, a2p),
     ])
 
 def graft(f: Flow, interact: Interact, a, b):
+  f.d.comb += interact.grafting.eq(True)
+  f.d.on_done += [
+    interact.done.eq(True),
+    interact.stat_graft.eq(interact.stat_graft + 1),
+  ]
+  yield GrafterPort.graft(f, interact.grafter, addr=a.payload, port=b)
+
+
+def copy_ext_val(f: Flow, interact: Interact, value, node):
+  # TODO: check copyability; non-copyable values erase the node and raise a fault.
+  yield
+
+
+def call(f: Flow, interact: Interact, function, value):
+  # TODO: dispatch merge/split calls using the function ID and swap flag.
   yield
