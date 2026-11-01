@@ -42,10 +42,10 @@ class Verify:
         (
           f"read_rtlil {DESIGN_IL}; "
           "prep -top top; "
-          "chformal -lower; "
           "memory_map; "
           "opt; "
           "async2sync; "
+          "chformal -lower; "
           "dffunmap; "
           f"write_smt2 -wires {DESIGN_SMT2}"
         )

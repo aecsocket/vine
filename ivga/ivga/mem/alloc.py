@@ -176,12 +176,12 @@ def free(f: Flow, alloc: Alloc):
 
   with f.While(remaining != 0):
     addr = addrs[(remaining - 1).as_unsigned()]
-    left = left_half(addr)
+    left = Addr.left_half(addr)
 
     # store a marker saying this word is free now,
     # and read the other half of this pair
     # to see if we've already freed the other half
-    other = HeapPort.read(f, alloc.heap, addr=other_half(addr))
+    other = HeapPort.read(f, alloc.heap, addr=Addr.other_half(addr))
     other = Port(other)
     yield HeapPort.write(f, alloc.heap, addr=addr, write=Port.freed())
 
@@ -216,9 +216,3 @@ AllocArbiter = make_arbiter_type(
   AllocPort,
   lambda client: (client.req_alloc != 0) | (client.req_free != 0),
 )
-
-def other_half(addr):
-  return addr ^ 1
-
-def left_half(addr):
-  return addr & ~1

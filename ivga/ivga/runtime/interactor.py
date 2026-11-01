@@ -117,7 +117,7 @@ def program(f: Flow, interactor: Interactor):
 def annihilate(f: Flow, interactor: Interactor, a, b):
   a1, a2 = Port.aux(f, a)
   b1, b2 = Port.aux(f, b)
-  yield LinkerPort.link_all(f, [
+  yield LinkerPort.link_batch(f, [
     (interactor.linkers[0], a1, b1),
     (interactor.linkers[1], a2, b2),
   ])
@@ -128,17 +128,27 @@ def annihilate(f: Flow, interactor: Interactor, a, b):
   yield
 
 def commute(f: Flow, interactor: Interactor, a, b):
-  addrs, oom = yield AllocPort.alloc(f, n_pairs=4)
-  a1, a2, b1, b2 = addrs[0], addrs[1], addrs[2], addrs[3]
-  a01, a02 = Port.aux(f, a)
-  b01, b02 = Port.aux(b)
-  yield LinkerPort.link_all(f, [
-    (interactor.linkers[0], a1)
-  ])
+  addr_bases, oom = yield AllocPort.alloc(f, n_pairs=4)
+  with f.If(oom):
+    # TODO raise a fault
+    f.d.sync += interactor.done.eq(True)
+  with f.Else():
+    a1, a2, b1, b2 = addr_bases[0], addr_bases[1], addr_bases[2], addr_bases[3]
+    a1_1, a1_2 = a1, Addr.other_half(a1)
+    a2_1, a2_2 = a2, Addr.other_half(a2)
+    b1_1, b1_2 = b1, Addr.other_half(b1)
+    b2_1, b2_2 = b2, Addr.other_half(b2)
+
+    a01, a02 = Port.aux(f, a)
+    b01, b02 = Port.aux(f, b)
+
+    yield LinkerPort.link_batch(f, [
+      (interactor.linkers[0], a1)
+    ])
 
 def copy(f: Flow, interactor: Interactor, a, b):
   x, y = Port.aux(f, b)
-  yield LinkerPort.link_all(f, [
+  yield LinkerPort.link_batch(f, [
     (interactor.linkers[0], x, a),
     (interactor.linkers[1], y, a),
   ])

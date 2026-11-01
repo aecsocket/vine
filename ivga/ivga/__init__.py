@@ -9,9 +9,19 @@ SYNC = "sync"
 WORD_WIDTH = 64
 Word = _am.unsigned(WORD_WIDTH)
 
+class _AddrShape(_am.Shape):
+  @staticmethod
+  def other_half(addr):
+    return addr ^ 1
+
+  @staticmethod
+  def left_half(addr):
+    return addr & ~1
+
 ADDR_WIDTH = 10
 ADDR_MAX = (1 << ADDR_WIDTH) - 1
-Addr = _am.unsigned(ADDR_WIDTH)
+Addr = _AddrShape(ADDR_WIDTH)
+
 
 # hardware statistics counter (e.g. num of allocs/frees)
 STAT_WIDTH = 32
@@ -61,7 +71,7 @@ class Port(_data.Struct):
       one.label.eq(0),
 
       two.tag.eq(Tag.WIRE),
-      two.payload.eq(port.payload + 1),
+      two.payload.eq(Addr.other_half(port.payload)),
       two.label.eq(0),
     ]
     return one, two
