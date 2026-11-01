@@ -67,21 +67,24 @@ class Port(_data.Struct):
   payload: _am.unsigned(45)
   label: _am.unsigned(16)
 
-  # unsafe if used on a port that's not
-  # a principal port of Comb or ExtVal
   @staticmethod
-  def aux(m, port) -> tuple[_am.Signal, _am.Signal]:
-    one, two = _am.Signal(Port), _am.Signal(Port)
-    m.d.comb += [
-      one.tag.eq(Tag.WIRE),
-      one.payload.eq(port.payload),
-      one.label.eq(0),
+  def new(tag: _am.Value, label: _am.Value, payload: _am.Value) -> "Port":
+    def field(value, width):
+      return _am.Cat(_am.Value.cast(value), _am.Const(0, width))[:width]
 
-      two.tag.eq(Tag.WIRE),
-      two.payload.eq(Addr.other_half(port.payload)),
-      two.label.eq(0),
-    ]
-    return one, two
+    return Port(_am.Cat(
+      field(tag, 3),
+      field(payload, 45),
+      field(label, 16)
+    ))
+
+  @staticmethod
+  def aux(port) -> tuple["Port", "Port"]:
+    """Return auxiliary wire views of a binary node's principal port."""
+    return (
+      Port.new(_am.Const(Tag.WIRE), _am.Const(0, 16), port.payload),
+      Port.new(_am.Const(Tag.WIRE), _am.Const(0, 16), Addr.other_half(port.payload)),
+    )
 
   @staticmethod
   def none():
@@ -93,7 +96,6 @@ class Port(_data.Struct):
 
   @staticmethod
   def with_addr(addr):
-    # Extend/truncate the address to the payload width without a temporary signal.
     payload = _am.Cat(_am.Value.cast(addr), _am.Const(0, 45))[:45]
     return Port(_am.Cat(_am.Const(Tag.NONE, 3), payload, _am.Const(0, 16)))
 

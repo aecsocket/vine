@@ -1,6 +1,5 @@
 from amaranth import *
 from amaranth.lib import wiring
-from amaranth.lib.data import ArrayLayout
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, expand
 from ivga.mem.alloc import AllocArbiter, AllocPort
@@ -8,7 +7,7 @@ from ivga.mem.heap import HeapArbiter, HeapPort
 from ivga.mem.stack import StackArbiter, StackPort
 from ivga.runtime.fault import FaultPort
 
-from ivga import Addr, Port, Port2, Stat, Tag, flatten
+from ivga import Port, Port2, Stat, Tag, flatten
 
 from .linker import Linker, LinkerPort
 
@@ -49,15 +48,15 @@ class Interactor(wiring.Component):
     m, interactor = Module(), self
     m.d.sync += interactor.done.eq(False)
 
-    heap_arb = self.heap_arb = m.submodules.heap_arb
-    alloc_arb = self.alloc_arb = m.submodules.alloc_arb
-    active_arb = self.active_arb = m.submodules.active_arb
+    heap_arb = m.submodules.heap_arb = self.heap_arb
+    alloc_arb = m.submodules.alloc_arb = self.alloc_arb
+    active_arb = m.submodules.active_arb = self.active_arb
     wiring.connect(m, heap_arb.real, wiring.flipped(self.heap))
     wiring.connect(m, alloc_arb.real, wiring.flipped(self.alloc))
     wiring.connect(m, active_arb.real, wiring.flipped(self.active))
 
     for i in range(LINKERS):
-      linker = self.linkers[i] = m.submodules[f"linker_{i}"]
+      linker = m.submodules[f"linker_{i}"] = self.linkers[i]
       wiring.connect(m, heap_arb.clients[i], linker.heap)
       wiring.connect(m, alloc_arb.clients[i], linker.alloc)
       wiring.connect(m, active_arb.clients[i], linker.active)
@@ -115,54 +114,62 @@ def program(f: Flow, interactor: Interactor):
       yield from copy(f, interactor, a, b)
 
 def annihilate(f: Flow, interactor: Interactor, a, b):
-  a1, a2 = Port.aux(f, a)
-  b1, b2 = Port.aux(f, b)
+  a1, a2 = Port.aux(a)
+  b1, b2 = Port.aux(b)
+  f.d.on_done += [
+    interactor.done.eq(True),
+    interactor.stat_annihilate.eq(interactor.stat_annihilate + 1),
+  ]
   yield LinkerPort.link_batch(f, [
     (interactor.linkers[0], a1, b1),
     (interactor.linkers[1], a2, b2),
   ])
-  f.d.sync += [
-    interactor.done.eq(True),
-    interactor.stat_annihilate.eq(interactor.stat_annihilate + 1),
-  ]
-  yield
 
 def commute(f: Flow, interactor: Interactor, a, b):
-  addr_bases, oom = yield AllocPort.alloc(f, n_pairs=4)
+  ports, oom = yield AllocPort.new_ports(
+    f,
+    interactor.alloc,
+    # WRONG TODO a.tag/a.label THEN b.tag/b.label
+    tag=a.tag,
+    label=a.label,
+    n_ports=4,
+  )
   with f.If(oom):
     # TODO raise a fault
     f.d.sync += interactor.done.eq(True)
+    yield
   with f.Else():
-    a1, a2, b1, b2 = addr_bases[0], addr_bases[1], addr_bases[2], addr_bases[3]
-    a1_1, a1_2 = a1, Addr.other_half(a1)
-    a2_1, a2_2 = a2, Addr.other_half(a2)
-    b1_1, b1_2 = b1, Addr.other_half(b1)
-    b2_1, b2_2 = b2, Addr.other_half(b2)
+    # port, left, right
+    a1p, a1l, a1r = ports[0]
+    a2p, a2l, a2r = ports[1]
+    b1p, b1l, b1r = ports[2]
+    b2p, b2l, b2r = ports[3]
 
-    a0_1, a0_2 = Port.aux(f, a)
-    b0_1, b0_2 = Port.aux(f, b)
+    # left/right halves of ports A/B
+    al, ar = Port.aux(a)
+    bl, br = Port.aux(b)
 
     yield LinkerPort.link_batch(f, [
       # link fresh wires
-      (interactor.linkers[0], a1_1, b1_1),
-      (interactor.linkers[1], a1_2, b2_1),
-      (interactor.linkers[2], a2_1, b1_2),
-      (interactor.linkers[3], a2_2, b2_2),
-      # link A/B
-      (interactor.linkers[4], a0_1, b1_0),
-      (interactor.linkers[5], a2_2, b2_2),
-      (interactor.linkers[6], a2_2, b2_2),
-      (interactor.linkers[7], a2_2, b2_2),
+      (interactor.linkers[0], a1l, b1l),
+      (interactor.linkers[1], a1r, b2l),
+      (interactor.linkers[2], a2l, b1r),
+      (interactor.linkers[3], a2r, b2r),
+
+      # link node wires and freshly made ports
+      (interactor.linkers[4], al, b1p),
+      (interactor.linkers[5], ar, b2p),
+      (interactor.linkers[6], bl, a1p),
+      (interactor.linkers[7], br, a2p),
     ])
 
 def copy(f: Flow, interactor: Interactor, a, b):
-  x, y = Port.aux(f, b)
+  x, y = Port.aux(b)
+  f.d.on_done += [
+    interactor.done.eq(True),
+    interactor.stat_copy.eq(interactor.stat_copy + 1),
+  ]
   yield LinkerPort.link_batch(f, [
     (interactor.linkers[0], x, a),
     (interactor.linkers[1], y, a),
   ])
-  f.d.sync += [
-    interactor.done.eq(True),
-    interactor.stat_copy.eq(interactor.stat_copy + 1),
-  ]
-  yield

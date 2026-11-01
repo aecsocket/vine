@@ -6,7 +6,7 @@ from amflow import Flow, ValueLike, expand
 from ivga.mem.heap import HeapPort
 from ivga.util.arbiter import make_arbiter_type
 
-from ivga import ADDR_MAX, Addr, Port, Stat, flatten
+from ivga import ADDR_MAX, Addr, Port, Stat, Tag, flatten
 
 ALLOC_LANES = 4
 """How many pairs (2 words) can be allocated at once."""
@@ -52,6 +52,21 @@ class AllocPort(wiring.Signature):
       oom.eq(alloc.oom),
     ]
     return bases, oom
+
+  @staticmethod
+  def new_ports(
+    f: Flow, alloc, *, tag: Value, label: Value, n_ports: int,
+  ) -> tuple[list[tuple[Port, Port, Port]], Signal]:
+    bases, oom = AllocPort.alloc(f, alloc, n_pairs=n_ports)
+    ports: list[tuple[Port, Port, Port]] = []
+    for i in range(n_ports):
+      base = Value.cast(bases[i])
+      ports.append((
+        Port.new(tag, label, base),
+        Port.new(Const(Tag.WIRE), Const(0, 16), base),
+        Port.new(Const(Tag.WIRE), Const(0, 16), Addr.other_half(base)),
+      ))
+    return ports, oom
 
   @staticmethod
   def free_all(f: Flow, alloc, *, n_words: ValueLike, addrs: ValueLike) -> None:
