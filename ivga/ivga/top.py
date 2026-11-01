@@ -3,7 +3,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from ivga import PORT_ERASER, Port
-from ivga.mem.alloc import Alloc
+from ivga.mem.pair_alloc import Alloc
 from ivga.mem.heap import make_heap
 from ivga.runtime.interact import Interact
 from ivga.runtime.link import Link

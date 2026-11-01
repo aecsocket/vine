@@ -1,7 +1,7 @@
 from amaranth import *
 from amaranth.lib import wiring
 from amaranth.sim import Simulator
-from ivga.mem.alloc import ADDR_EMPTY, Alloc
+from ivga.mem.pair_alloc import ADDR_EMPTY, Alloc
 from ivga.mem.heap import Heap, HeapArbiter
 from ivga.mem.stack import Stack
 from ivga.runtime.linker import Linker

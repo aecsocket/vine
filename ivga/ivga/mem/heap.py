@@ -5,7 +5,7 @@ from amaranth.lib.wiring import In, Out
 from amflow import Capture, Flow, ValueLike
 from ivga.util.arbiter import make_arbiter_type
 
-from ivga import Addr, Port, Word, flatten
+from ivga import Addr, Word, flatten
 
 CAPACITY = 1024
 
@@ -13,9 +13,9 @@ class HeapPort(wiring.Signature):
   """
   # Operations
 
-  - `read()`: read the port at `read_addr`, placing the result in `read_data`.
+  - `read()`: read the word at `read_addr`, placing the result in `read_data`.
 
-  - `write()`: write the port `write_data` to address `write_addr`.
+  - `write()`: write the word `write_data` to address `write_addr`.
 
   If both `read()` and `write()` are high on a cycle, both operations are
   accepted together and may address different words. If the addresses match,
@@ -26,20 +26,19 @@ class HeapPort(wiring.Signature):
   This is in contrast to other ports like `AllocPort`, which take a variable
   amount of time to complete after `granted` (that's why `done` exists there).
 
-  `Heap` operates on structured `Port`s, not raw `Word`s. All values in the
-  `Heap` are guaranteed to be formed like `Port`s, but may not necessarily be
-  valid `Port`s (they may be uninitialized, freed, or used as metadata).
+  `Heap` operates on raw `Word`s, not structured `Port`s, since many subsystems
+  may use the heap for their own allocations; not just allocating port pairs.
   """
 
   def __init__(self):
     super().__init__({
       "read": Out(1),
       "read_addr": Out(Addr),
-      "read_data": In(Port),
+      "read_data": In(Word),
 
       "write": Out(1),
       "write_addr": Out(Addr),
-      "write_data": Out(Port),
+      "write_data": Out(Word),
 
       "granted": In(1),
     })

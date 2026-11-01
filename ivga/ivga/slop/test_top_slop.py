@@ -10,7 +10,7 @@ from amaranth import Const, Module, Signal
 from amaranth.sim import Simulator
 
 from ivga import PORT_INVALID, Port, Tag
-from ivga.mem.alloc import ADDR_EMPTY
+from ivga.mem.pair_alloc import ADDR_EMPTY
 from ivga.slop.read_stats import FIELDS as READER_FIELDS
 from ivga.slop.read_stats import MAX_FRAME_BYTES, parse_snapshot
 from ivga.slop.stats_uart import FIELDS, StatsUART

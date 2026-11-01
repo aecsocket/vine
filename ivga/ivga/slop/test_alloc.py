@@ -43,7 +43,7 @@ from amaranth.hdl import UnusedElaboratable
 from amaranth.sim import Simulator
 
 from ivga import ADDR_MAX, Port
-from ivga.mem.alloc import ADDR_EMPTY, ALLOC_LANES, FREE_LANES, Alloc, AllocArbiter
+from ivga.mem.pair_alloc import ADDR_EMPTY, ALLOC_LANES, FREE_LANES, Alloc, AllocArbiter
 
 EMPTY = ADDR_EMPTY.value
 FREED = Port.freed().as_value().value
@@ -156,7 +156,7 @@ class HeapModel:
 
   def drive_data(self, ctx, port, cycle):
     response = self.pending[0] if self.pending and self.pending[0].due == cycle else None
-    ctx.set(port.read_data.as_value(), response.value if response else POISON)
+    ctx.set(port.read_data, response.value if response else POISON)
     return response
 
   def drive(self, ctx, port, cycle):
@@ -173,7 +173,7 @@ class HeapModel:
       for addr in (read_addr, write_addr):
         assert addr is None or 0 <= addr < len(self.words), ("heap address", addr)
       kind = "stamp" if read and write else "pop" if read else "link"
-      request = (kind, read_addr, write_addr, ctx.get(port.write_data.as_value()) if write else None)
+      request = (kind, read_addr, write_addr, ctx.get(port.write_data) if write else None)
     if self.stalled is not None:
       assert request == self.stalled, ("payload changed/withdrawn before grant", self.stalled, request)
     granted = bool(ctx.get(port.granted))

@@ -2,14 +2,14 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, expand
-from ivga.mem.alloc import AllocArbiter, AllocPort
 from ivga.mem.heap import HeapArbiter, HeapPort
+from ivga.mem.pair_alloc import AllocArbiter, AllocPort
 from ivga.mem.stack import StackArbiter, StackPort
 from ivga.runtime.fault import FaultPort
 
 from ivga import Addr, Port, Port2, Stat, Tag, flatten
 
-from .linker import Linker, LinkPort
+from .linker import Linker, LinkerPort
 
 
 class InteractPort(wiring.Signature):
@@ -158,7 +158,7 @@ def annihilate(f: Flow, interact: Interact, a, b):
     interact.done.eq(True),
     interact.stat_annihilate.eq(interact.stat_annihilate + 1),
   ]
-  yield LinkPort.link_batch(f, [
+  yield LinkerPort.link_batch(f, [
     (interact.linkers[0], a1, b1),
     (interact.linkers[1], a2, b2),
   ])
@@ -169,7 +169,7 @@ def copy(f: Flow, interact: Interact, a, b):
     interact.done.eq(True),
     interact.stat_copy.eq(interact.stat_copy + 1),
   ]
-  yield LinkPort.link_batch(f, [
+  yield LinkerPort.link_batch(f, [
     (interact.linkers[0], x, a),
     (interact.linkers[1], y, a),
   ])
@@ -199,7 +199,7 @@ def commute(f: Flow, interact: Interact, a, b):
     bl, br = Port.aux(b)
 
     # TODO: maybe just instantiate 4 linkers?
-    yield LinkPort.link_batch(f, [
+    yield LinkerPort.link_batch(f, [
       # link fresh wires
       (interact.linkers[0], a1l, b1l),
       (interact.linkers[1], a1r, b2l),

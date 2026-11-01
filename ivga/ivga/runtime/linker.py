@@ -4,8 +4,8 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amflow import Flow, ValueLike, expand
-from ivga.mem.alloc import AllocPort
 from ivga.mem.heap import HeapPort
+from ivga.mem.pair_alloc import AllocPort
 from ivga.mem.stack import StackPort
 
 from ivga import Port, Port2, Stat, Tag, flatten
@@ -175,8 +175,8 @@ def follow(f: Flow, linker: Linker, p):
   p = f.capture(p)
 
   with f.While(p.tag == Tag.WIRE):
-    raw_q = yield HeapPort.read(f, linker.heap, addr=p.payload)
-    q = Port(raw_q)
+    q = yield HeapPort.read(f, linker.heap, addr=p.payload)
+    q = Port(q)
 
     with f.If(q.tag == Tag.NONE):
       f.Break()
