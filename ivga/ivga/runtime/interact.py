@@ -259,6 +259,7 @@ def graft(f: Flow, interact: Interact, a, b):
 
 
 def copy_ext_val(f: Flow, interact: Interact, value, node):
+
   # TODO: check copyability; non-copyable values erase the node and raise a fault.
   yield
 
