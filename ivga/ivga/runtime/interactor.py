@@ -7,7 +7,7 @@ from ivga.mem.heap import HeapArbiter, HeapPort
 from ivga.mem.stack import StackArbiter, StackPort
 from ivga.runtime.fault import FaultPort
 
-from ivga import Port, Port2, Stat, Tag, flatten
+from ivga import Addr, Port, Port2, Stat, Tag, flatten
 
 from .linker import Linker, LinkerPort
 
@@ -27,7 +27,7 @@ class InteractorPort(wiring.Signature):
       "stat_reset": Out(1),
     })
 
-LINKERS = 4
+LINKERS = 8
 
 class Interactor(wiring.Component):
   control: In(InteractorPort())
@@ -126,24 +126,24 @@ def annihilate(f: Flow, interactor: Interactor, a, b):
   ])
 
 def commute(f: Flow, interactor: Interactor, a, b):
-  ports, oom = yield AllocPort.new_ports(
-    f,
-    interactor.alloc,
-    # WRONG TODO a.tag/a.label THEN b.tag/b.label
-    tag=a.tag,
-    label=a.label,
-    n_ports=4,
-  )
+  bases, oom = yield AllocPort.alloc(f, interactor.alloc, n_pairs=4)
   with f.If(oom):
     # TODO raise a fault
     f.d.sync += interactor.done.eq(True)
     yield
   with f.Else():
+    def new_port(base):
+      return (
+        Port.new(a.tag, a.label, base),
+        Port.new(Const(Tag.WIRE), Const(0, 16), base),
+        Port.new(Const(Tag.WIRE), Const(0, 16), Addr.other_half(base)),
+      )
+
     # port, left, right
-    a1p, a1l, a1r = ports[0]
-    a2p, a2l, a2r = ports[1]
-    b1p, b1l, b1r = ports[2]
-    b2p, b2l, b2r = ports[3]
+    a1p, a1l, a1r = new_port(bases[0])
+    a2p, a2l, a2r = new_port(bases[1])
+    b1p, b1l, b1r = new_port(bases[2])
+    b2p, b2l, b2r = new_port(bases[3])
 
     # left/right halves of ports A/B
     al, ar = Port.aux(a)
