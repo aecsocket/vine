@@ -91,11 +91,12 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
 
   def heap_request(ctx):
     return (ctx.get(dut.heap.read), ctx.get(dut.heap.write),
-            ctx.get(dut.heap.addr), ctx.get(dut.heap.write_data))
+            ctx.get(dut.heap.read_addr), ctx.get(dut.heap.write_addr),
+            ctx.get(dut.heap.write_data))
 
   async def heap_service(ctx):
     while True:
-      read, write, addr, data = request = heap_request(ctx)
+      read, write, read_addr, write_addr, data = request = heap_request(ctx)
       if not (read or write):
         await ctx.tick()
         continue
@@ -104,10 +105,10 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
         await ctx.tick()
         assert heap_request(ctx) == request, "heap request changed while waiting"
 
-      # Read-first swap: return the old word, not the replacement.
-      old = heap.get(addr, 0)
+      # Read before writing, including when both addresses are the same.
+      old = heap.get(read_addr, 0)
       if write:
-        heap[addr] = data
+        heap[write_addr] = data
       heap_ops.append(request)
       ctx.set(dut.heap.read_data, old if read else POISON)
       ctx.set(dut.heap.done, True)
@@ -195,7 +196,7 @@ def simulate_links(links, initial, expected, expected_freed, expected_heap_ops,
     assert freed == expected_freed, (freed, expected_freed)
     assert len(heap_ops) == expected_heap_ops, heap_ops
     if expected_heap_writes is not None:
-      assert sum(write for _, write, _, _ in heap_ops) == expected_heap_writes, heap_ops
+      assert sum(write for _, write, _, _, _ in heap_ops) == expected_heap_writes, heap_ops
 
     # Read the actual RAM-backed stack, not just the observed push bus.
     for expected_pair in reversed(expected_packed):

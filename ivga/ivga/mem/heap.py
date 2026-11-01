@@ -13,17 +13,13 @@ class HeapPort(wiring.Signature):
   """
   # Operations
 
-  - `read()`: read the word at `addr`, placing the result in `read_data`.
+  - `read()`: read the word at `read_addr`, placing the result in `read_data`.
 
-  - `write()`: write the word `write_data` to address `addr`.
+  - `write()`: write the word `write_data` to address `write_addr`.
 
-  If both `read()` and `write()` are high on a cycle, then the value at `addr`
-  will be swapped with the value in `write_data`, and the old value will be
-  available at `read_data`. In Rust terms:
-
-  ```rs
-  let read_data = swap(&mut addr, write_data);
-  ```
+  If both `read()` and `write()` are high on a cycle, both operations are
+  accepted together and may address different words. If the addresses match,
+  `read_data` returns the old word, letting you do a read-then-write swap.
 
   `HeapPort` has no `done` signal; as soon as `granted` is high, on the next
   cycle `read_data` will be available, and `write_data` will have been written.
@@ -34,11 +30,14 @@ class HeapPort(wiring.Signature):
   def __init__(self):
     super().__init__({
       "read": Out(1),
-      "write": Out(1),
-      "addr": Out(Addr),
-      "write_data": Out(Word),
-      "granted": In(1),
+      "read_addr": Out(Addr),
       "read_data": In(Word),
+
+      "write": Out(1),
+      "write_addr": Out(Addr),
+      "write_data": Out(Word),
+
+      "granted": In(1),
     })
 
   @staticmethod
@@ -46,7 +45,7 @@ class HeapPort(wiring.Signature):
     result = f.capture(heap.read_data, after_step=True)
     f.d.comb += [
       heap.read.eq(True),
-      heap.addr.eq(addr),
+      heap.read_addr.eq(addr),
     ]
     f.d.until += heap.granted
     return result
@@ -55,7 +54,7 @@ class HeapPort(wiring.Signature):
   def write(f: Flow, heap, *, addr: ValueLike, write: ValueLike) -> None:
     f.d.comb += [
       heap.write.eq(True),
-      heap.addr.eq(addr),
+      heap.write_addr.eq(addr),
       heap.write_data.eq(write),
     ]
     f.d.until += heap.granted
@@ -66,7 +65,8 @@ class HeapPort(wiring.Signature):
     f.d.comb += [
       heap.read.eq(True),
       heap.write.eq(True),
-      heap.addr.eq(addr),
+      heap.read_addr.eq(addr),
+      heap.write_addr.eq(addr),
       heap.write_data.eq(write),
     ]
     f.d.until += heap.granted
@@ -94,10 +94,10 @@ class Heap(wiring.Component):
     has_request = self.read | self.write
     m.d.comb += [
       read.en.eq(self.read),
-      read.addr.eq(self.addr),
+      read.addr.eq(self.read_addr),
       self.read_data.eq(read.data),
       write.en.eq(self.write),
-      write.addr.eq(self.addr),
+      write.addr.eq(self.write_addr),
       write.data.eq(self.write_data),
       self.granted.eq(has_request),
     ]

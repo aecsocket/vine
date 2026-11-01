@@ -41,6 +41,9 @@ class Tag(_enum.Enum, shape=3):
   COMB = 0b101
   EXT_FN = 0b110
 
+# first bit of the payload;
+# right after the tag
+HALF_BIT = 0b1000
 
 class Port(_data.Struct):
   tag: Tag
@@ -75,8 +78,8 @@ class Port(_data.Struct):
   def freed():
     return _am.Const({
       "tag": Tag.NONE,
-      "payload": 2 << 45 - 1,
-      "label": 2 << 16 - 1,
+      "payload": (1 << 45) - 1,
+      "label": (1 << 16) - 1,
     }, Port)
 
   @staticmethod

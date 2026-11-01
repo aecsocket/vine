@@ -188,8 +188,8 @@ class Processor(wiring.Component):
                                  (arbiter.grant_b, link.heap, 1)):
       with core.If(running & ~pending & grant):
         core.d.comb += [
-          read_enable.eq(client.read), heap_read.addr.eq(client.addr),
-          write_enable.eq(client.write), heap_write.addr.eq(client.addr),
+          read_enable.eq(client.read), heap_read.addr.eq(client.read_addr),
+          write_enable.eq(client.write), heap_write.addr.eq(client.write_addr),
           heap_write.data.eq(client.write_data),
         ]
         core.d.sync += [pending.eq(True), owner.eq(index)]

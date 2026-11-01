@@ -12,23 +12,41 @@ dut = m.submodules.alloc = Alloc(8)
 wiring.connect(m, dut.heap, heap.control)
 
 async def testbench_foo(ctx):
-  await ctx.tick().repeat(10)
   ctx.set(dut.req_alloc, 2)
-  assert ctx.get(dut.alloc_addrs[0]) == 0
-  assert ctx.get(dut.alloc_addrs[1]) == 0
+  assert ctx.get(dut.alloc_bases[0]) == 0
+  assert ctx.get(dut.alloc_bases[1]) == 0
+  assert ctx.get(dut.stat_allocs) == 0
+  assert ctx.get(dut.stat_frees) == 0
+  assert ctx.get(dut.free_count) == 0
 
+  ctx.set(dut.req_alloc, 2)
   await ctx.tick()
   ctx.set(dut.req_alloc, 0)
-  assert ctx.get(dut.alloc_addrs[0]) == 0
-  assert ctx.get(dut.alloc_addrs[1]) == 1
 
-  ctx.set(dut.req_free, 2)
-  ctx.set(dut.free_addrs, [0, 1])
+  assert not ctx.get(dut.oom)
+  assert ctx.get(dut.alloc_bases[0]) == 0
+  assert ctx.get(dut.alloc_bases[1]) == 2
+  assert ctx.get(dut.stat_allocs) == 4
 
+  ctx.set(dut.req_free, 1)
+  ctx.set(dut.free_addrs[0], 1)
   await ctx.tick()
   ctx.set(dut.req_free, 0)
-  await ctx.tick().repeat(2)
-  assert ctx.get(dut.granted) == True
+  await ctx.tick()
+
+  assert ctx.get(dut.alloc_bases[0]) == 0
+  assert ctx.get(dut.stat_frees) == 1
+  assert ctx.get(dut.free_count) == 0
+  await ctx.tick()
+
+  ctx.set(dut.req_free, 1)
+  ctx.set(dut.free_addrs[0], 0)
+  await ctx.tick()
+  ctx.set(dut.req_free, 0)
+  await ctx.tick().repeat(4)
+
+  assert ctx.get(dut.stat_frees) == 2
+  assert ctx.get(dut.free_count) == 2
 
 sim = Simulator(m)
 sim.add_clock(PERIOD)

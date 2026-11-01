@@ -154,8 +154,8 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
   with f.Else():
     # swap_target(A as Wire, B)
     # => swap(&mut heap[A.payload], B)
-    raw_previous = yield HeapPort.swap(f, linker.heap, addr=wire.payload, write=other)
-    previous = Port(raw_previous)
+    previous = yield HeapPort.swap(f, linker.heap, addr=wire.payload, write=other)
+    previous = Port(previous)
 
     with f.If(previous.tag == Tag.NONE):
       # no node at A.payload's old slot, no work left

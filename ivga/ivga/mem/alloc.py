@@ -6,7 +6,7 @@ from amflow import Flow, ValueLike, expand
 from ivga.mem.heap import HeapPort
 from ivga.util.arbiter import make_arbiter_type
 
-from ivga import ADDR_MAX, Addr, Port, Stat, Tag, flatten
+from ivga import ADDR_MAX, Addr, Port, Stat, flatten
 
 ALLOC_LANES = 4
 """How many pairs (2 words) can be allocated at once."""
@@ -176,17 +176,38 @@ def free(f: Flow, alloc: Alloc):
 
   with f.While(remaining != 0):
     addr = addrs[(remaining - 1).as_unsigned()]
+    left = left_half(addr)
 
-    # store a marker saying this word is free now
+    # store a marker saying this word is free now,
+    # and read the other half of this pair
+    # to see if we've already freed the other half
+    other = HeapPort.read(f, alloc.heap, addr=other_half(addr))
+    other = Port(other)
     yield HeapPort.write(f, alloc.heap, addr=addr, write=Port.freed())
 
     f.d.on_done += [
-      alloc.free_head.eq(addr),
-      alloc.free_count.eq(alloc.free_count + 1),
       alloc.stat_frees.eq(alloc.stat_frees + 1),
       remaining.eq(remaining - 1),
     ]
-    yield HeapPort.write(f, alloc.heap, addr=addr, write=alloc.free_head)
+
+    with f.If(other == Port.freed()):
+      # we previously freed the other half of this pair,
+      # and we just freed this half, so the pair is now free;
+      # mark it as such.
+      # if we haven't freed the other half yet,
+      # then we don't add it to the free list,
+      # cause this pair isn't safe to reuse yet.
+      f.d.on_done += [
+        # add the *left* half to the free list,
+        # not the address we just freed,
+        # since we might have freed the non-left word,
+        # breaking the free list precondition.
+        alloc.free_head.eq(left),
+        alloc.free_count.eq(alloc.free_count + 2),
+      ]
+      HeapPort.write(f, alloc.heap, addr=left, write=alloc.free_head)
+
+    yield
 
   f.d.sync += alloc.done.eq(True)
   yield
@@ -195,3 +216,9 @@ AllocArbiter = make_arbiter_type(
   AllocPort,
   lambda client: (client.req_alloc != 0) | (client.req_free != 0),
 )
+
+def other_half(addr):
+  return addr ^ 1
+
+def left_half(addr):
+  return addr & ~1

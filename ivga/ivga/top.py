@@ -53,22 +53,22 @@ class Processor(wiring.Component):
       # alloc gets access to the heap
       m.d.comb += [
         heap_read.en.eq(alloc.heap.read),
-        heap_read.addr.eq(alloc.heap.addr),
+        heap_read.addr.eq(alloc.heap.read_addr),
         alloc.heap.read_data.eq(heap_read.data),
 
         heap_write.en.eq(alloc.heap.write),
-        heap_write.addr.eq(alloc.heap.addr),
+        heap_write.addr.eq(alloc.heap.write_addr),
         heap_write.data.eq(alloc.heap.write_data),
       ]
     with m.If(heap_arb.grant_b):
       # link gets access to the heap
       m.d.comb += [
         heap_read.en.eq(link.heap.read),
-        heap_read.addr.eq(link.heap.addr),
+        heap_read.addr.eq(link.heap.read_addr),
         link.heap.read_data.eq(heap_read.data),
 
         heap_write.en.eq(link.heap.write),
-        heap_write.addr.eq(link.heap.addr),
+        heap_write.addr.eq(link.heap.write_addr),
         heap_write.data.eq(link.heap.write_data),
       ]
 
