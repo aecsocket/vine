@@ -29,7 +29,7 @@ class HeapPort(wiring.Signature):
   amount of time to complete after `granted` (that's why `done` exists there).
 
   `Heap` operates on raw `Word`s, not structured `Port`s, since many subsystems
-  may use the heap for their own allocations; not just allocating port pairs.
+  may use the heap for their own allocations, not just allocating port pairs.
   """
 
   def __init__(self):

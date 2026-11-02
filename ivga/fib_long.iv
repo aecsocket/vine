@@ -1,0 +1,37 @@
+// Benchmark fib(32000): 1000x the iterations of fib.iv.
+// N32 arithmetic wraps modulo 2^32; the result is ivm:n32#1659985861.
+// Use an eraser root for the long benchmark so result forwarding wires can be reclaimed.
+// Retaining the result chain for all 32000 steps can exhaust the small heap.
+
+iv:main {
+  ^ = result
+  ivm:graft[:fib] = ivm:x(ivm:n32#32000 ivm:x(ivm:n32#0 ivm:x(ivm:n32#1 result)))
+}
+
+// State: (n, a, b, result). Return a when n == 0; otherwise take a step.
+:fib {
+  ^ = ivm:x(ivm:y(n_test n_step) ivm:x(a ivm:x(b result)))
+  n_test = ivm:ext:merge[vi:n32:ne](
+    ivm:n32#0
+    ivm:ext:merge[ivm:branch](
+      ivm:branch[:fib::done, :fib::step]
+      ivm:x(n_step ivm:x(a ivm:x(b result)))
+    )
+  )
+}
+
+:fib::done {
+  ^ = ivm:x(ivm:eraser ivm:x(result ivm:x(ivm:eraser result)))
+}
+
+// (n, a, b) -> (n - 1, b, a + b).
+:fib::step {
+  ^ = ivm:x(
+    ivm:ext:merge[vi:n32:sub](ivm:n32#1 n_next)
+    ivm:x(
+      ivm:ext:merge[vi:n32:add](b_add sum)
+      ivm:x(ivm:y(b_next b_add) result)
+    )
+  )
+  ivm:graft[:fib] = ivm:x(n_next ivm:x(b_next ivm:x(sum result)))
+}
