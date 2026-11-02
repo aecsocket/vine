@@ -185,7 +185,7 @@ def _print_snapshot(snapshot: dict[str, int]):
     output["active_faults"] = sorted(
       key for key, value in snapshot.items() if key.startswith("fault_") and value
     )
-  print(json.dumps(output, sort_keys=True), flush=True)
+  print(json.dumps(output, indent=2, sort_keys=True), flush=True)
 
 
 def main(argv=None) -> int:

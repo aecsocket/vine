@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import override
 from unittest.mock import patch
 
+from ivga import read_stats as production_read_stats
 from ivga.slop import read_stats
 
 FRAME = (
@@ -34,6 +35,16 @@ EXPECTED = {
   "link_erase": 171,
   "interact_annihilate": 0x12345678,
 }
+
+
+class ProductionSnapshotOutputTests(unittest.TestCase):
+  def test_pretty_printed_json_preserves_fields_and_faults(self):
+    snapshot = {"pages_stat_allocs": 42, "fault_oom": 1, "fault_bad_graft": 0}
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+      production_read_stats._print_snapshot(snapshot)
+    expected = {**snapshot, "active_faults": ["fault_oom"]}
+    self.assertEqual(stdout.getvalue(), json.dumps(expected, indent=2, sort_keys=True) + "\n")
 
 
 class ParseSnapshotTests(unittest.TestCase):

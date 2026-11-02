@@ -81,6 +81,7 @@ class PageAlloc(wiring.Component):
     assert 0 <= reserved_pages <= n_pages
 
     self.n_pages = n_pages
+    self.reserved_pages = reserved_pages
     self.empty_id = Signal(range(n_pages + 1), init=reserved_pages)
     self.free_head_id = Signal(PageId)
     self.free_count = Signal(range(n_pages + 1))

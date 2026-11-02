@@ -1,12 +1,15 @@
 import argparse
+import json
 import subprocess
 from pathlib import Path
 from typing import override
 
+from amaranth import Module
 from amaranth.build.run import LocalBuildProducts
 from amaranth.hdl._xfrm import FragmentTransformer, StatementTransformer
 from amaranth_boards.arty_a7 import ArtyA7_100Platform
 
+from ivga import Port
 from ivga.top import Processor
 
 BUILD_DIR = "build/arty_a7_100t"
@@ -33,6 +36,10 @@ def main():
     help="Run the full build chain",
   )
   _ = build.add_argument(
+    "image", type=Path, nargs="?", default=Path("build/fib.hex"),
+    help="BRAM hex image with an adjacent JSON manifest (default: build/fib.hex)",
+  )
+  _ = build.add_argument(
     "--program",
     action="store_true",
     help="Upload the built bitstream to the FPGA",
@@ -54,8 +61,17 @@ def main():
 
 
   if args.command == "build":
+    manifest = json.loads(args.image.with_suffix(".json").read_text())
+    words = [int(line, 16) for line in args.image.read_text().splitlines()]
+    m = Module()
+    processor = m.submodules.processor = Processor(reserved_pages=len(manifest["reserved_pages"]))
+    processor.runtime.memory.memory.init = words
+    m.d.comb += [
+      processor.entry_addr.eq(manifest["entry_addr"]),
+      processor.root_port.eq(Port.eraser()),
+    ]
     platform.build(
-      _StripProperties()(Processor()),
+      _StripProperties()(m),
       build_dir=BUILD_DIR,
       do_program=args.program
     )
