@@ -130,4 +130,5 @@ StackArbiter = make_arbiter_type(
   StackPort,
   lambda client: client.req_push | client.req_pop,
   always_out=("empty", "full"),
+  register_grant=True,
 )

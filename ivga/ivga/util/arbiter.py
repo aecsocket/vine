@@ -29,11 +29,17 @@ class Arbiter(wiring.Component):
   - If A doesn't want the resource but B and C do, we start from the current
     priority (A) and cycle until we find a slot who wants the resource (B).
     We give them the grant, and bump priority again.
+
+  With `register_grant`, selection takes a separate clock edge. The one-hot
+  winner is held until `take`; clients must hold their commands until accepted.
+  Selection and acceptance cannot overlap, so throughput is at most one command
+  every two cycles. Priority advances only on acceptance, not selection.
   """
 
-  def __init__(self, width: int):
+  def __init__(self, width: int, *, register_grant: bool = False):
     assert width > 0
     self.width = width
+    self.register_grant = register_grant
     self.priority = Signal(range(width))
 
     super().__init__({
@@ -61,10 +67,16 @@ class Arbiter(wiring.Component):
       # if eligible is 0, then e.g. prio is C but we need to let A or B get grant
       # if eligible > 0, then there's someone at or after our prio who will get it
       candidates.eq(Mux(eligible.any(), eligible, request)),
-      # give the grant to the single lowest bit out of our candidates
-      # candidates = 0110 -> grant = 0010
-      grant.eq(candidates & -candidates),
     ]
+    # candidates = 0110 -> winner = 0010
+    winner = candidates & -candidates
+    if self.register_grant:
+      with m.If(self.take):
+        m.d.sync += grant.eq(0)
+      with m.Elif(~grant.any()):
+        m.d.sync += grant.eq(winner)
+    else:
+      m.d.comb += grant.eq(winner)
 
     for client in range(N):
       with m.If(self.take & grant[client]):
@@ -78,7 +90,11 @@ def make_arbiter_type[T: wiring.Signature](
   *,
   always_out: tuple[str, ...] = (),
   exclude: tuple[str, ...] = (),
+  response_latency: int = 1,
+  register_grant: bool = False,
 ) -> type[wiring.Component]:
+  assert response_latency >= 1
+
   class ResourceArbiter(wiring.Component):
     def __init__(self, width, *port_args, **port_kwargs):
       self.width = width
@@ -90,7 +106,14 @@ def make_arbiter_type[T: wiring.Signature](
 
     def elaborate(self, platform):
       m = Module()
-      arbiter = m.submodules.arbiter = Arbiter(self.width)
+      arbiter = m.submodules.arbiter = Arbiter(self.width, register_grant=register_grant)
+      # Route fixed-latency responses using the owner from their acceptance
+      # edge, not a newer request that may already have been accepted.
+      response_owner = self.owner
+      for stage in range(response_latency - 1):
+        delayed_owner = Signal.like(self.owner, name=f"response_owner_{stage}")
+        m.d.sync += delayed_owner.eq(response_owner)
+        response_owner = delayed_owner
 
       for i, client in enumerate(self.clients):
         wants = client_wants(client)
@@ -111,7 +134,7 @@ def make_arbiter_type[T: wiring.Signature](
             m.d.sync += self.owner.eq(i)
             m.d.comb += arbiter.take.eq(True)
 
-        with m.If(self.owner == i):
+        with m.If(response_owner == i):
           connect_inputs(
             m,
             wiring.flipped(client),

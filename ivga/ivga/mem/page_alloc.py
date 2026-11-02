@@ -111,29 +111,34 @@ def program(f: Flow, pages: PageAlloc):
   available = pages.n_pages - pages.empty_id + pages.free_count
 
   with f.If(pages.req_alloc > 0):
-    with f.If(pages.req_alloc > available):
+    requested = f.capture(pages.req_alloc)
+    yield
+    with f.If(requested > available):
       f.d.sync += [
         pages.done.eq(True),
         pages.oom.eq(True)
       ]
       yield
     with f.Else():
+      yield
       # specialize LANES = 1 for less timing bubbles
       # keep this in cause I might change the number of LANES later
       if LANES == 1:
         yield from do_alloc_one(f, pages)
       else:
-        yield from do_alloc_many(f, pages)
+        yield from do_alloc_many(f, pages, requested)
 
   with f.Elif(pages.req_free > 0):
     yield from free(f, pages)
 
 def do_alloc_one(f: Flow, pages: PageAlloc):
   with f.If(pages.free_count != 0):
+    yield
     # prioritize taking entries from the free list
     f.d.sync += pages.alloc_ids[0].eq(pages.free_head_id)
     free_head_base = pages.free_head_id * PAGE_SIZE
     next_free_head_id = yield HeapPort.read(f, pages.heap, addr=free_head_base)
+    yield
 
     f.d.sync += [
       pages.free_head_id.eq(next_free_head_id),
@@ -153,14 +158,16 @@ def do_alloc_one(f: Flow, pages: PageAlloc):
     ]
     yield
 
-def do_alloc_many(f: Flow, pages: PageAlloc):
-  left_to_alloc = f.capture(pages.req_alloc)
+def do_alloc_many(f: Flow, pages: PageAlloc, requested):
+  left_to_alloc = f.capture(requested)
 
   with f.While((left_to_alloc != 0) & (pages.free_count != 0)):
+    yield
     lane_id = (left_to_alloc - 1).as_unsigned()
     f.d.sync += pages.alloc_ids[lane_id].eq(pages.free_head_id)
     free_head_base = pages.free_head_id * PAGE_SIZE
     next_free_head_id = yield HeapPort.read(f, pages.heap, addr=free_head_base)
+    yield
 
     f.d.sync += [
       pages.free_head_id.eq(next_free_head_id),
@@ -187,22 +194,26 @@ def do_alloc_many(f: Flow, pages: PageAlloc):
 def free(f: Flow, pages: PageAlloc):
   left_to_free = f.capture(pages.req_free)
   page_ids = f.capture(pages.free_ids)
+  yield
 
   with f.While(left_to_free != 0):
+    yield
     page_id = page_ids[(left_to_free - 1).as_unsigned()]
     page_base = page_id * PAGE_SIZE
 
-    f.d.on_done += [
+    yield HeapPort.write(f, pages.heap, addr=page_base, write=pages.free_head_id)
+    f.d.sync += [
       pages.stat_frees.eq(pages.stat_frees + 1),
       pages.free_head_id.eq(page_id),
       pages.free_count.eq(pages.free_count + 1),
       left_to_free.eq(left_to_free - 1),
       pages.done.eq(left_to_free == 1),
     ]
-    yield HeapPort.write(f, pages.heap, addr=page_base, write=pages.free_head_id)
+    yield
 
 
 PageAllocArbiter = make_arbiter_type(
   PageAllocPort,
   lambda client: (client.req_alloc != 0) | (client.req_free != 0),
+  register_grant=True,
 )

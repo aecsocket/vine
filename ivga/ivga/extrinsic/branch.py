@@ -1,6 +1,6 @@
 from amaranth import *
 
-from ivga import ADDR_MAX, Port
+from ivga import ADDR_MAX, Addr, Port
 from ivga.extrinsic.common import ExtFn, ExtFnContext, ExtFnGen, ExtTy
 from ivga.extrinsic.n32 import N32
 from ivga.mem.heap import HeapPort
@@ -14,6 +14,7 @@ def branch(cx: ExtFnContext) -> ExtFnGen:
   index, base = a.payload[:32], b.payload
 
   def do_error():
+    yield
     f.d.on_done += cx.error.eq(True)
     yield LinkerPort.link(f, cx.linker, a=out, b=Port.eraser())
 
@@ -22,14 +23,22 @@ def branch(cx: ExtFnContext) -> ExtFnGen:
 
   valid = (a.payload <= 0xFFFF_FFFF) & (base <= ADDR_MAX)
   with f.If(valid):
+    yield
     # branch table construction should validate that:
     # - `heap[base] = table_len` is the actual amount of entries in the table
     # - each entry in `heap[base + 1 : base + 1 + table_len]` is a valid
     #   `Tag.GRAFT` port which we can branch off
     table_len = yield HeapPort.read(f, cx.heap, addr=base)
+    yield
 
     with f.If(index < table_len):
-      arm = yield HeapPort.read(f, cx.heap, addr=base + 1 + index)
+      # Register the bounds decision before entering heap arbitration again.
+      yield
+      # Keep address arithmetic separate from the shared heap payload mux.
+      arm_addr = f.capture((base + 1 + index)[:Addr.width])
+      yield
+      arm = yield HeapPort.read(f, cx.heap, addr=arm_addr)
+      yield
       arm = Port(arm)
 
       f.d.on_done += cx.error.eq(False)

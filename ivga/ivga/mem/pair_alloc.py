@@ -162,6 +162,7 @@ def acquire_page(f: Flow, pairs: PairAlloc, failed):
     f.d.sync += failed.eq(True)
     yield
   with f.Else():
+    yield
     initial = Const({
       "used": 0,
       "next_pair": 1,
@@ -169,31 +170,35 @@ def acquire_page(f: Flow, pairs: PairAlloc, failed):
       "next_page": PAGE_NONE,
     }, PageHeader)
     yield from write_previous(f, pairs, page_ids[0], PAGE_NONE)
-    f.d.on_done += [
+    yield HeapPort.write(f, pairs.heap, addr=page_ids[0] << PAGE_SHIFT, write=initial.as_value())
+    f.d.sync += [
       pairs.partial_head.eq(page_ids[0]),
       pairs.pages_owned.eq(pairs.pages_owned + 1),
       pairs.free_count.eq(pairs.free_count + PAIRS_PER_PAGE * 2),
     ]
-    yield HeapPort.write(f, pairs.heap, addr=page_ids[0] << PAGE_SHIFT, write=initial.as_value())
+    yield
 
 
 def commit_pair(f: Flow, pairs: PairAlloc, remaining, page, header, index, *, free_head, next_pair):
-  f.d.on_done += [
-    pairs.alloc_bases[(remaining - 1).as_unsigned()].eq((page << PAGE_SHIFT) + index * 2),
-    pairs.free_count.eq(pairs.free_count - 2),
-    remaining.eq(remaining - 1),
-  ]
   yield from write_header(
     f, pairs, page, header,
     used=header.used + 1, free_head=free_head, next_pair=next_pair,
   )
+  f.d.sync += [
+    pairs.alloc_bases[(remaining - 1).as_unsigned()].eq((page << PAGE_SHIFT) + index * 2),
+    pairs.free_count.eq(pairs.free_count - 2),
+    remaining.eq(remaining - 1),
+  ]
+  yield
   with f.If(header.used == PAIRS_PER_PAGE - 1):
+    yield
     yield from unlink_page(f, pairs, page, header)
 
 
 def reserve_pair(f: Flow, pairs: PairAlloc, remaining):
   page = f.capture(pairs.partial_head)
   raw = yield HeapPort.read(f, pairs.heap, addr=page << PAGE_SHIFT)
+  yield
   header = PageHeader(raw)
   index = f.capture(Mux(header.free_head != 0, header.free_head, header.next_pair))
   f.d.sync += [
@@ -201,12 +206,15 @@ def reserve_pair(f: Flow, pairs: PairAlloc, remaining):
     Assert((index >= 1) & (index <= PAIRS_PER_PAGE), "Invalid page-local pair index"),
   ]
   with f.If(header.free_head != 0):
+    yield
     next_free = yield HeapPort.read(f, pairs.heap, addr=(page << PAGE_SHIFT) + index * 2)
+    yield
     yield from commit_pair(
       f, pairs, remaining, page, header, index,
       free_head=next_free[:PAIR_SHIFT], next_pair=header.next_pair,
     )
   with f.Else():
+    yield
     yield from commit_pair(
       f, pairs, remaining, page, header, index,
       free_head=0, next_pair=header.next_pair + 1,
@@ -217,17 +225,23 @@ def do_alloc(f: Flow, pairs: PairAlloc):
   requested = f.capture(pairs.req_alloc)
   remaining = f.capture(pairs.req_alloc)
   failed = f.capture(False)
+  yield
 
   with f.While((remaining != 0) & ~failed):
+    yield
     with f.If(pairs.partial_head == PAGE_NONE):
+      yield
       yield from acquire_page(f, pairs, failed)
     with f.If(~failed):
+      yield
       yield from reserve_pair(f, pairs, remaining)
 
   with f.If(failed):
+    yield
     # Reservations are private until done. Undo them without counting user frees.
     undo = f.capture(remaining)
     with f.While(undo < requested):
+      yield
       # Aborted reservations were never initialized by the caller. Restore the
       # odd-half marker before publishing the even half as a free-list link.
       yield HeapPort.write(
@@ -250,21 +264,28 @@ def do_alloc(f: Flow, pairs: PairAlloc):
 
 def unlink_page(f: Flow, pairs: PairAlloc, page, header):
   with f.If(pairs.partial_head == page):
+    yield
     with f.If(header.next_page != PAGE_NONE):
-      f.d.on_done += pairs.partial_head.eq(header.next_page)
+      yield
       yield from write_previous(f, pairs, header.next_page, PAGE_NONE)
+      f.d.sync += pairs.partial_head.eq(header.next_page)
+      yield
     with f.Else():
       f.d.sync += pairs.partial_head.eq(PAGE_NONE)
       yield
   with f.Else():
+    yield
     previous_raw = yield HeapPort.read(f, pairs.heap, addr=(page << PAGE_SHIFT) + 1)
+    yield
     previous = previous_raw[:PageRef.width]
     f.d.sync += Assert(previous < PAGE_NONE, "Invalid previous partial-page reference")
     raw = yield HeapPort.read(f, pairs.heap, addr=previous << PAGE_SHIFT)
+    yield
     previous_header = PageHeader(raw)
     f.d.sync += Assert(previous_header.next_page == page, "Broken partial-page back link")
     yield from write_header(f, pairs, previous, previous_header, next_page=header.next_page)
     with f.If(header.next_page != PAGE_NONE):
+      yield
       yield from write_previous(f, pairs, header.next_page, previous)
 
 
@@ -272,6 +293,7 @@ def release_pair(f: Flow, pairs: PairAlloc, addr):
   page = f.capture(addr >> PAGE_SHIFT)
   index = f.capture(addr[1:PAGE_SHIFT])
   raw = yield HeapPort.read(f, pairs.heap, addr=page << PAGE_SHIFT)
+  yield
   header = PageHeader(raw)
   f.d.sync += [
     Assert(index != 0, "Cannot free page metadata"),
@@ -279,44 +301,54 @@ def release_pair(f: Flow, pairs: PairAlloc, addr):
   ]
 
   with f.If(header.used == 1):
+    yield
     yield from unlink_page(f, pairs, page, header)
-    f.d.on_done += [
+    yield PageAllocPort.free(f, pairs.pages, n_pages=1, page_ids=page)
+    f.d.sync += [
       pairs.pages_owned.eq(pairs.pages_owned - 1),
       pairs.free_count.eq(pairs.free_count - (PAIRS_PER_PAGE - 1) * 2),
     ]
-    yield PageAllocPort.free(f, pairs.pages, n_pages=1, page_ids=page)
+    yield
   with f.Else():
+    yield
     yield HeapPort.write(
       f, pairs.heap,
       addr=(page << PAGE_SHIFT) + index * 2,
       write=header.free_head,
     )
     with f.If(header.used == PAIRS_PER_PAGE):
+      yield
       yield from write_previous(f, pairs, page, PAGE_NONE)
       with f.If(pairs.partial_head != PAGE_NONE):
+        yield
         yield from write_previous(f, pairs, pairs.partial_head, page)
     next_page = Mux(header.used == PAIRS_PER_PAGE, pairs.partial_head, header.next_page)
-    with f.If(header.used == PAIRS_PER_PAGE):
-      f.d.on_done += pairs.partial_head.eq(page)
-    f.d.on_done += pairs.free_count.eq(pairs.free_count + 2)
     yield from write_header(
       f, pairs, page, header,
       used=header.used - 1, free_head=index, next_page=next_page,
     )
+    with f.If(header.used == PAIRS_PER_PAGE):
+      f.d.sync += pairs.partial_head.eq(page)
+    f.d.sync += pairs.free_count.eq(pairs.free_count + 2)
+    yield
 
 
 def free(f: Flow, pairs: PairAlloc):
   remaining = f.capture(pairs.req_free)
   addrs = f.capture(pairs.free_addrs)
+  yield
   freed = Port.freed().as_value()
 
   with f.While(remaining != 0):
+    yield
     addr = addrs[(remaining - 1).as_unsigned()]
     f.d.sync += Assert(addr[1:PAGE_SHIFT] != 0, "Cannot free page metadata")
     other = HeapPort.read(f, pairs.heap, addr=Addr.other_half(addr))
     yield HeapPort.write(f, pairs.heap, addr=addr, write=freed)
+    yield
 
     with f.If(other == freed):
+      yield
       yield from release_pair(f, pairs, addr)
 
     f.d.sync += Assert(pairs.live_words != 0, "Freeing without a live word")
@@ -332,4 +364,5 @@ def free(f: Flow, pairs: PairAlloc):
 PairAllocArbiter = make_arbiter_type(
   PairAllocPort,
   lambda client: (client.req_alloc != 0) | (client.req_free != 0),
+  register_grant=True,
 )

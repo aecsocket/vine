@@ -87,15 +87,19 @@ def program(f: Flow, linker: Linker):
   with f.If(linker.req_link):
     a = f.capture(linker.req_a)
     b = f.capture(linker.req_b)
+    # Decode stored operands rather than forwarding the caller into arbitration.
+    yield
 
     with f.While(True):
       yield from do_link(f, linker, a, b)
 
 def do_link(f: Flow, linker: Linker, a, b):
   with f.If(a.tag == Tag.WIRE):
+    yield
     yield from link_wire(f, linker, a, b, next_a=a, next_b=b)
 
   with f.Elif(b.tag == Tag.WIRE):
+    yield
     yield from link_wire(f, linker, b, a, next_a=a, next_b=b)
 
   with f.Elif(
@@ -129,6 +133,7 @@ def do_link(f: Flow, linker: Linker, a, b):
     f.Break()
 
   with f.Else():
+    yield
     # all other work goes on the worklist
     # TODO: active_fast/active_slow like in IVM
     with f.If(linker.active.full):
@@ -138,6 +143,7 @@ def do_link(f: Flow, linker: Linker, a, b):
       yield
       f.Break()
     with f.Else():
+      yield
       active_pair = Signal(Port2)
       f.d.comb += [
         active_pair.a.eq(a),
@@ -153,13 +159,16 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
     # A's bits compose a wire, and B has the same bits,
     # so B is the same wire as A.
     # so we just free `A.payload`, and don't do any real connecting.
+    yield
     f.d.on_done += linker.done.eq(True)
     yield PairAllocPort.free(f, linker.alloc, addr=wire.payload)
     f.Break()
   with f.Else():
+    yield
     # swap_target(A as Wire, B)
     # => swap(&mut heap[A.payload], B)
     previous = yield HeapPort.swap(f, linker.heap, addr=wire.payload, write=other)
+    yield
     previous = Port(previous)
 
     with f.If(previous.tag == Tag.NONE):
@@ -170,6 +179,7 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
     with f.Else():
       # free A.payload and `link(previous, b)`
       # in this cycle we only free A.payload
+      yield
       f.d.on_done += [
         next_a.eq(previous),
         next_b.eq(other),
@@ -178,14 +188,19 @@ def link_wire(f: Flow, linker: Linker, wire, other, *, next_a, next_b):
 
 def follow(f: Flow, linker: Linker, p):
   p = f.capture(p)
+  yield
 
   with f.While(p.tag == Tag.WIRE):
+    yield
     q = yield HeapPort.read(f, linker.heap, addr=p.payload)
+    yield
     q = Port(q)
 
     with f.If(q.tag == Tag.NONE):
+      yield
       f.Break()
     with f.Else():
+      yield
       f.d.on_done += p.eq(q)
       yield PairAllocPort.free(f, linker.alloc, addr=p.payload)
 

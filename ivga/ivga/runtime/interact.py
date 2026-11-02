@@ -4,10 +4,10 @@ from amaranth.lib.wiring import In, Out
 from amflow import Flow, ValueLike, expand
 from ivga.extrinsic import EXT_FNS, FN_ID_MASK, SWAP_BIT, TY_IDS, ext_val_label_is_copy
 from ivga.extrinsic.common import ExtFnContext
-from ivga.mem.heap import HeapArbiter, HeapPort
+from ivga.mem.heap import HeapPort
 from ivga.mem.page_alloc import PageAllocPort
-from ivga.mem.pair_alloc import PairAllocArbiter, PairAllocPort
-from ivga.mem.stack import StackArbiter, StackPort
+from ivga.mem.pair_alloc import PairAllocPort
+from ivga.mem.stack import StackPort
 from ivga.runtime.fault import FaultPort
 from ivga.runtime.grafter import Grafter, GrafterPort
 
@@ -49,39 +49,32 @@ LINKERS = 8
 
 class Interact(wiring.Component):
   control: In(InteractPort())
-  heap: Out(HeapPort())
+  # Leaf clients are arbitrated together by the parent, not through nested arbiters.
+  heap: Out(HeapPort()).array(LINKERS + 2)
   pages: Out(PageAllocPort())
-  pairs: Out(PairAllocPort())
-  active: Out(StackPort(Port2))
+  pairs: Out(PairAllocPort()).array(LINKERS + 2)
+  active: Out(StackPort(Port2)).array(LINKERS)
   fault: Out(FaultPort())
 
   def __init__(self):
     self.linkers = [Linker() for _ in range(LINKERS)]
     self.link_ports = [LinkerPort().create() for _ in range(LINKERS)]
     self.grafting = Signal()
-    self.heap_arb = HeapArbiter(LINKERS + 2)
-    self.pairs_arb = PairAllocArbiter(LINKERS + 2)
-    self.active_arb = StackArbiter(LINKERS, Port2)
     self.grafter = Grafter()
     super().__init__()
     flatten(self, self.control)
+    self.own_heap = self.heap[LINKERS]
+    self.own_pairs = self.pairs[LINKERS]
 
   def elaborate(self, platform):
     m, interact = Module(), self
     m.d.sync += interact.done.eq(False)
 
-    heap_arb = m.submodules.heap_arb = self.heap_arb
-    pairs_arb = m.submodules.pairs_arb = self.pairs_arb
-    active_arb = m.submodules.active_arb = self.active_arb
-    wiring.connect(m, heap_arb.real, wiring.flipped(self.heap))
-    wiring.connect(m, pairs_arb.real, wiring.flipped(self.pairs))
-    wiring.connect(m, active_arb.real, wiring.flipped(self.active))
-
     for i in range(LINKERS):
       linker = m.submodules[f"linker_{i}"] = self.linkers[i]
-      wiring.connect(m, heap_arb.clients[i], linker.heap)
-      wiring.connect(m, pairs_arb.clients[i], linker.alloc)
-      wiring.connect(m, active_arb.clients[i], linker.active)
+      wiring.connect(m, wiring.flipped(self.heap[i]), linker.heap)
+      wiring.connect(m, wiring.flipped(self.pairs[i]), linker.alloc)
+      wiring.connect(m, wiring.flipped(self.active[i]), linker.active)
       if i == 0:
         # linker 0 is also used by the grafter when we're `graft`ing
         with m.If(self.grafting):
@@ -91,20 +84,10 @@ class Interact(wiring.Component):
       else:
         wiring.connect(m, linker.control, self.link_ports[i])
 
-    # all heap/alloc access is arb'd thru `heap_arb`/`pairs_arb`,
-    # but some of our own interact code (eg in commutation)
-    # needs to access the heap or allocator.
-    # so we need an extra client - ourselves.
-    own_heap = self.own_heap = HeapPort().create()
-    wiring.connect(m, heap_arb.clients[LINKERS], own_heap)
-    own_pairs = self.own_pairs = PairAllocPort().create()
-    wiring.connect(m, pairs_arb.clients[LINKERS], own_pairs)
-
-    # grafter unit also needs access
     grafter = m.submodules.grafter = self.grafter
-    wiring.connect(m, heap_arb.clients[LINKERS + 1], grafter.heap)
+    wiring.connect(m, wiring.flipped(self.heap[LINKERS + 1]), grafter.heap)
     wiring.connect(m, wiring.flipped(self.pages), grafter.pages)
-    wiring.connect(m, pairs_arb.clients[LINKERS + 1], grafter.pairs)
+    wiring.connect(m, wiring.flipped(self.pairs[LINKERS + 1]), grafter.pairs)
 
     expand(m, lambda f: program(f, interact))
 
@@ -125,6 +108,8 @@ def program(f: Flow, interact: Interact):
   with f.If(interact.req_interact):
     a = f.capture(interact.req_a)
     b = f.capture(interact.req_b)
+    # Break the caller-to-linker combinational path at command acceptance.
+    yield
 
     def ext_or_erase(tag):
       return (tag == Tag.EXT_VAL) | (tag == Tag.ERASE)
@@ -149,17 +134,21 @@ def program(f: Flow, interact: Interact):
       & (b.tag == Tag.COMB)
       & (b.label != 0)
     ):
+      yield
       yield from copy(f, interact, a, b)
     with f.Elif(
       (a.tag == Tag.COMB)
       & (b.tag == Tag.GRAFT)
       & (a.label != 0)
     ):
+      yield
       yield from copy(f, interact, b, a)
 
     with f.Elif(a.tag == Tag.GRAFT):
+      yield
       yield from graft(f, interact, a, b)
     with f.Elif(b.tag == Tag.GRAFT):
+      yield
       yield from graft(f, interact, b, a)
 
     with f.Elif(
@@ -169,6 +158,7 @@ def program(f: Flow, interact: Interact):
     ):
       # N >-< N where both nodes have the same label;
       # annihilate each other
+      yield
       yield from annihilate(f, interact, a, b)
 
     with f.Elif(
@@ -179,26 +169,34 @@ def program(f: Flow, interact: Interact):
       # (Comb|ExtFn) >-< (Comb|ExtFn); if two Combs,
       # they must not have the same label, since we handled
       # that in the last case, so we commute
+      yield
       yield from commute(f, interact, a, b)
 
     with f.Elif(a.tag == Tag.ERASE):
       # Erase >-< B (B1, B2)
       # => (Erase >-< B1, Erase >-< B2)
+      yield
       yield from copy(f, interact, a, b)
     with f.Elif(b.tag == Tag.ERASE):
+      yield
       yield from copy(f, interact, b, a)
 
     with f.Elif((a.tag == Tag.EXT_VAL) & (b.tag == Tag.COMB)):
+      yield
       yield from copy_ext_val(f, interact, a, b)
     with f.Elif((b.tag == Tag.EXT_VAL) & (a.tag == Tag.COMB)):
+      yield
       yield from copy_ext_val(f, interact, b, a)
 
     with f.Elif((a.tag == Tag.EXT_FN) & (b.tag == Tag.EXT_VAL)):
+      yield
       yield from call(f, interact, a, b)
     with f.Elif((b.tag == Tag.EXT_FN) & (a.tag == Tag.EXT_VAL)):
+      yield
       yield from call(f, interact, b, a)
 
     with f.Else():
+      yield
       f.d.comb += interact.fault.invalid_interaction.eq(True)
       yield LinkerPort.link_batch(f, [
         (interact.link_ports[0], a, Port.eraser()),
@@ -235,6 +233,7 @@ def commute(f: Flow, interact: Interact, a, b):
     f.d.sync += interact.done.eq(True)
     yield
   with f.Else():
+    yield
     def new_port(base):
       return (
         Port.new(a.tag, a.label, base),
@@ -277,8 +276,10 @@ def graft(f: Flow, interact: Interact, a, b):
 
 def copy_ext_val(f: Flow, interact: Interact, value, node):
   with f.If(ext_val_label_is_copy(value.label)):
+    yield
     yield from copy(f, interact, value, node)
   with f.Else():
+    yield
     f.d.comb += interact.fault.ext_copy.eq(True)
     yield from copy(f, interact, Port.eraser(), node)
 
@@ -288,19 +289,25 @@ def call(f: Flow, interact: Interact, function, value):
   other_wire, out = Port.aux(function)
 
   with f.If(function_id < len(EXT_FNS)):
+    yield
     other = yield HeapPort.read(f, interact.own_heap, addr=other_wire.payload)
+    # Keep operand decoding off the heap response-to-request path.
+    yield
     other = Port(other)
 
     with f.If(other.tag == Tag.EXT_VAL):
+      yield
       # Consume the stored operand. The output half remains owned by the linker.
       f.d.on_done += interact.stat_extrinsic.eq(interact.stat_extrinsic + 1)
       yield PairAllocPort.free(f, interact.own_pairs, addr=other_wire.payload)
+      yield
       swapped = function.label[15]
       a = Port(Mux(swapped, other, value))
       b = Port(Mux(swapped, value, other))
       yield from execute_ext_fn(f, interact, function_id, a, b, out)
 
     with f.Else():
+      yield
       # Waiting here could deadlock the sole reducer. Re-enter through a fresh
       # function node when the missing operand becomes available instead.
       bases, oom = yield PairAllocPort.alloc(f, interact.own_pairs, n_pairs=1)
@@ -311,6 +318,7 @@ def call(f: Flow, interact: Interact, function, value):
 
       with f.Else():
         base = f.capture(bases[0])
+        yield
         yield HeapPort.write(f, interact.own_heap, addr=base, write=0)
         yield HeapPort.write(f, interact.own_heap, addr=Addr.other_half(base), write=0)
 
@@ -324,6 +332,7 @@ def call(f: Flow, interact: Interact, function, value):
         ])
 
   with f.Else():
+    yield
     f.d.comb += interact.fault.ext_generic.eq(True)
     f.d.on_done += interact.done.eq(True)
     yield LinkerPort.link_batch(f, [
@@ -334,11 +343,13 @@ def call(f: Flow, interact: Interact, function, value):
 def execute_ext_fn(f: Flow, interact: Interact, function_id, a, b, out):
   for i, entry in enumerate(EXT_FNS):
     with f.If(function_id == i) if i == 0 else f.Elif(function_id == i):
+      yield
       inputs_valid = (
         (a.label == TY_IDS[entry.inputs[0]])
         & (b.label == TY_IDS[entry.inputs[1]]))
 
       with f.If(inputs_valid):
+        yield
         cx = ExtFnContext(f, interact.own_heap, interact.link_ports[0], a, b, out)
         cx.ty_id.update(TY_IDS)
         yield from entry.fn(cx)
@@ -348,6 +359,7 @@ def execute_ext_fn(f: Flow, interact: Interact, function_id, a, b, out):
         yield
 
       with f.Else():
+        yield
         f.d.comb += interact.fault.ext_generic.eq(True)
         f.d.on_done += interact.done.eq(True)
         yield LinkerPort.link(f, interact.link_ports[0], a=out, b=Port.eraser())

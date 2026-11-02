@@ -23,7 +23,7 @@ from ivga.mem.page_alloc import PAGE_SIZE, PageAlloc, PageAllocArbiter
 from ivga.mem.pair_alloc import PAIRS_PER_PAGE, PairAlloc, PairAllocArbiter
 from ivga.mem.stack import Stack, StackArbiter
 from ivga.runtime.grafter import Graft, Instruction
-from ivga.runtime.interact import Interact
+from ivga.runtime.interact import LINKERS, Interact
 from ivga.runtime.linker import Linker
 
 PERIOD = 1e-6
@@ -78,24 +78,28 @@ class System:
     self.pages = m.submodules.pages = PageAlloc(n_pages=n_pages)
     self.pairs = m.submodules.pairs = PairAlloc()
     self.stack = m.submodules.stack = Stack(Port2, depth=8)
-    self.heap_arb = m.submodules.heap_arb = HeapArbiter(5)
-    pair_arb = m.submodules.pair_arb = PairAllocArbiter(3)
+    self.heap_arb = m.submodules.heap_arb = HeapArbiter(LINKERS + 6)
+    pair_arb = m.submodules.pair_arb = PairAllocArbiter(LINKERS + 4)
     page_arb = m.submodules.page_arb = PageAllocArbiter(3)
-    stack_arb = m.submodules.stack_arb = StackArbiter(3, Port2)
-    heap_clients = (self.pages.heap, self.pairs.heap, self.interact.heap, self.link.heap)
+    stack_arb = m.submodules.stack_arb = StackArbiter(LINKERS + 2, Port2)
+    heap_clients = (self.pages.heap, self.pairs.heap, *self.interact.heap, self.link.heap)
+    self.heap_owners = (
+      "pages", "pairs", *(f"link{i}" for i in range(LINKERS)),
+      "call", "grafter", "host_link", "host",
+    )
     for client, real in zip(heap_clients, self.heap_arb.clients):
       wiring.connect(m, client, real)
     for arb, clients, real in (
-      (pair_arb, (self.interact.pairs, self.link.alloc), self.pairs.control),
+      (pair_arb, (*self.interact.pairs, self.link.alloc), self.pairs.control),
       (page_arb, (self.pairs.pages, self.interact.pages), self.pages.control),
-      (stack_arb, (self.interact.active, self.link.active), self.stack.control),
+      (stack_arb, (*self.interact.active, self.link.active), self.stack.control),
     ):
       for i, client in enumerate(clients):
         wiring.connect(m, client, arb.clients[i])
       wiring.connect(m, arb.real, real)
-    self.host_heap = self.heap_arb.clients[4]
+    self.host_heap = self.heap_arb.clients[-1]
     self.host_pairs, self.host_pages, self.host_stack = (
-      pair_arb.clients[2], page_arb.clients[2], stack_arb.clients[2])
+      pair_arb.clients[-1], page_arb.clients[-1], stack_arb.clients[-1])
 
     self.allow, self.response = Signal(), Signal()
     real, heap = self.heap_arb.real, self.heap
@@ -105,7 +109,11 @@ class System:
       heap.write_data.eq(real.write_data), real.granted.eq(heap.granted & self.allow),
       real.read_data.eq(Mux(self.response, heap.read_data, POISON)),
     ]
-    m.d.sync += self.response.eq(heap.read & heap.granted)
+    read_pending = Signal()
+    m.d.sync += [
+      read_pending.eq(heap.read & heap.granted),
+      self.response.eq(read_pending),
+    ]
 
     self.clear_faults = Signal()
     self.latched = {name: Signal(name="latched_" + name) for name in FAULTS}
@@ -128,6 +136,7 @@ class Harness:
     self.ctx, self.s, self.grants = ctx, system, grants
     self.cycle = self.stalls = self.poisoned = 0
     self.trace, self.denied = [], {}
+    self.pending_read = None
     self.live, self.owned_pages, self.foreign_pages = set(), set(), set()
     ctx.set(system.allow, grants[0])
     self.pending_pairs = self.pending_pages = None
@@ -150,25 +159,19 @@ class Harness:
       self.denied.pop(i, None)
       if req is not None:
         if c.get(hp.granted):
-          owner = ("pages", "pairs", "interact", "host_link", "host")[i]
-          if i == 2:
-            internal = [("call", s.interact.own_heap)] + [
-              (f"link{j}", linker.heap) for j, linker in enumerate(s.interact.linkers)]
-            owners = [name for name, p in internal if request(c, p) and c.get(p.granted)]
-            assert len(owners) == 1, owners
-            owner = owners[0]
-          accepted.append(Transaction(owner, *req))
+          accepted.append(Transaction(s.heap_owners[i], *req))
         else:
           self.denied[i] = req
           self.stalls += 1
     physical = request(c, s.heap)
     assert len(accepted) == int(physical is not None), "lost/duplicated physical transaction"
-    expected_read = None
+    expected_read = self.pending_read
+    self.pending_read = None
     if accepted:
       tx = accepted[0]
       assert (tx.read, tx.write, tx.data) == physical
       if tx.read is not None:
-        expected_read = self.memory[tx.read]
+        self.pending_read = (tx.owner, self.memory[tx.read])
       if tx.write is not None:
         self.memory[tx.write] = tx.data
       self.trace.append(tx)
@@ -190,7 +193,14 @@ class Harness:
       self.pops += c.get(s.stack.req_pop)
     await c.tick()
     self.cycle += 1
-    assert c.get(s.heap_arb.real.read_data) == (POISON if expected_read is None else expected_read)
+    assert bool(c.get(s.response)) == (expected_read is not None), "heap response latency"
+    if expected_read is not None:
+      owner, data = expected_read
+      assert c.get(s.heap_arb.real.read_data) == data, "read-first heap response"
+      hp = s.heap_arb.clients[s.heap_owners.index(owner)]
+      assert c.get(hp.read_data) == data, "heap response routed to wrong owner"
+    else:
+      assert c.get(s.heap_arb.real.read_data) == POISON, "missing read-data poison"
     for kind, resource, pending_name in (
       ("pairs", s.pairs, "pending_pairs"), ("pages", s.pages, "pending_pages"),
     ):

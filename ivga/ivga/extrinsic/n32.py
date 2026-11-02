@@ -15,7 +15,8 @@ def arith(fn: Callable[[Value, Value], Value]) -> ExtFnMake:
     a = cx.a.payload[:32]
     b = cx.b.payload[:32]
     result = Signal(32)
-    cx.f.d.comb += result.eq(fn(a, b))
+    cx.f.d.sync += result.eq(fn(a, b))
+    yield
     out = Port.new(Const(Tag.EXT_VAL), Const(ty_n32, 16), result)
 
     cx.f.d.on_done += cx.error.eq(False)

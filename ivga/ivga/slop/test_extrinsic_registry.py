@@ -141,7 +141,10 @@ class ExtrinsicRegistryTests(unittest.TestCase):
               self.assertFalse(accepted[i], "duplicate link acceptance")
               accepted[i] = True
               due[i] = cycle + latency[i]
-        self.assertEqual(ctx.get(fault.ext_copy), not copyable)
+        # The decision stage precedes the copy action; its fault must remain
+        # asserted throughout the action, but not during the pipeline bubble.
+        started = any(request is not None for request in requests)
+        self.assertEqual(ctx.get(fault.ext_copy), started and not copyable)
         await ctx.tick()
         if ctx.get(done):
           completions += 1

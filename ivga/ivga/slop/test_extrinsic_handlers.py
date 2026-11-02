@@ -1,7 +1,8 @@
 """Direct handler tests: python -B -m ivga.slop.test_extrinsic_handlers.
 
 The heap model grants each held request once and supplies its synchronous
-response for exactly the following cycle. No files or waveforms are produced.
+response for one cycle after the next edge (two-edge latency). Read data is
+poisoned otherwise. No files or waveforms are produced.
 """
 
 import operator
@@ -92,6 +93,7 @@ class Services:
     self.initial = dict(memory)
     self.delay = delay
     self.heap_pending: Pending | None = None
+    self.heap_response: int | None = None
     self.link_pending: Pending | None = None
     self.link_busy: Pending | None = None
     self.reads = []
@@ -106,7 +108,10 @@ class Services:
     ctx.set(link.granted, 0)
     ctx.set(link.done, 0)
     t.assertFalse(ctx.get(h.write), "handler must not modify the table")
-    response = POISON
+    response = self.heap_response
+    self.heap_response = None
+    if response is not None:
+      t.assertFalse(ctx.get(h.read), "accepted heap read was requested again while awaiting response")
 
     request = (ctx.get(h.read), ctx.get(h.read_addr))
     if self.heap_pending is not None:
@@ -121,7 +126,7 @@ class Services:
         t.assertTrue(0 <= addr < CAPACITY, "out-of-heap read")
         t.assertIn(addr, self.memory, "read outside a constructed table")
         self.reads.append(addr)
-        response = self.memory[addr]
+        self.heap_response = self.memory[addr]
         ctx.set(h.granted, 1)
         self.heap_pending = None
 
@@ -153,9 +158,9 @@ class Services:
       t.assertEqual(self.completions, self.link_completions,
                     "handler completed early or more than once")
     await ctx.tick()
-    # A grant at this edge produces a response now, not in the request cycle.
-    # Even consecutive grants each have exactly one response-valid cycle.
-    ctx.set(h.read_data, response)
+    # A grant at edge N produces a response only after edge N+1.
+    # Poison both the request cycle and the first cycle after acceptance.
+    ctx.set(h.read_data, POISON if response is None else response)
 
 
 class ExtrinsicHandlerTests(unittest.TestCase):
@@ -213,6 +218,7 @@ class ExtrinsicHandlerTests(unittest.TestCase):
               self.assertEqual(service.reads[reads_before:], list(case.reads))
               self.assertEqual(service.memory, service.initial, "table changed")
               self.assertIsNone(service.heap_pending)
+              self.assertIsNone(service.heap_response)
               self.assertIsNone(service.link_pending)
               self.assertIsNone(service.link_busy)
 

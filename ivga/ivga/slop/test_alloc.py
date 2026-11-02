@@ -88,7 +88,11 @@ class System:
       real.granted.eq(heap.granted & self.allow),
       real.read_data.eq(Mux(self.response, heap.read_data, POISON)),
     ]
-    m.d.sync += self.response.eq(heap.read & heap.granted)
+    read_pending = Signal()
+    m.d.sync += [
+      read_pending.eq(heap.read & heap.granted),
+      self.response.eq(read_pending),
+    ]
 
 
 class Harness:
@@ -101,6 +105,7 @@ class Harness:
     self.cycle = self.stalls = self.poisoned = 0
     self.trace = []
     self.denied = {}
+    self.pending_read = None
     self.live = set()
     self.live_data = {}
     self.foreign = set()
@@ -213,23 +218,26 @@ class Harness:
           self.stalls += 1
     actual = payload(ctx, system.heap)
     assert len(accepted) == int(actual is not None), ("gate/arbiter duplicated or lost grant", accepted, actual)
-    expected_read = None
+    expected_read = self.pending_read
+    self.pending_read = None
     if accepted:
       transaction = accepted[0]
       assert (transaction.read_addr, transaction.write_addr, transaction.data) == actual
       for addr in (transaction.read_addr, transaction.write_addr):
         assert addr is None or 0 <= addr < system.n_pages * PAGE_SIZE, ("heap address", addr)
       if transaction.read_addr is not None:
-        expected_read = self.memory[transaction.read_addr]
+        self.pending_read = (transaction.client, self.memory[transaction.read_addr])
       if transaction.write_addr is not None:
         self.memory[transaction.write_addr] = transaction.data
       self.trace.append(transaction)
     await ctx.tick()
     self.cycle += 1
+    assert bool(ctx.get(system.response)) == (expected_read is not None), "heap response latency"
     if expected_read is not None:
-      assert ctx.get(system.arb.real.read_data) == expected_read, "read-first heap response"
-      port = self.pages.heap if accepted[0].client == "pages" else self.dut.heap
-      assert ctx.get(port.read_data) == expected_read, "heap response routed to wrong owner"
+      owner, data = expected_read
+      assert ctx.get(system.arb.real.read_data) == data, "read-first heap response"
+      port = self.pages.heap if owner == "pages" else self.dut.heap
+      assert ctx.get(port.read_data) == data, "heap response routed to wrong owner"
     else:
       assert ctx.get(system.arb.real.read_data) == POISON, "missing read-data poison"
     if reset:
@@ -568,11 +576,12 @@ def test_stalls_poison_and_exact_once_transactions():
     fresh = await h.alloc(4)
     await h.release_pairs(fresh)
   reference, stalls, poisoned = simulate(1, scenario)
-  assert not stalls and poisoned > 0
+  # Even without backpressure, each request waits through one selection cycle.
+  assert stalls == len(reference) and poisoned > 0
   for grants in GRANTS[1:]:
     trace, stalls, poisoned = simulate(1, scenario, grants=grants)
     assert trace == reference, "backpressure duplicated, dropped or changed accepted transactions"
-    assert stalls > 0 and poisoned > 0
+    assert stalls > len(trace) and poisoned > 0
 
 
 def test_statistics_and_reset_priority():

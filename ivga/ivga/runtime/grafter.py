@@ -115,16 +115,25 @@ def register_address(grafter: Grafter, register):
   return (page << PAGE_SHIFT) + (register & (PAGE_SIZE - 1))
 
 
-def read_word(f: Flow, grafter: Grafter, cursor):
+def read_word(f: Flow, grafter: Grafter, cursor, *, remaining=None):
   with f.If(cursor[:PAGE_SHIFT] == PAGE_SIZE - 1):
+    yield
     next_page = yield HeapPort.read(f, grafter.heap, addr=cursor)
+    yield
     f.d.sync += [
       Assert(next_page < MAX_REGISTER_PAGES, "Invalid graft continuation page"),
       cursor.eq(next_page << PAGE_SHIFT),
     ]
     yield
+  # Also separate the non-continuation path's decision from the word request.
+  yield
   f.d.on_done += cursor.eq(cursor + 1)
+  # Count instruction fetches on the read, not on a later branch-entry bubble.
+  if remaining is not None:
+    f.d.on_done += remaining.eq(remaining - 1)
   word = yield HeapPort.read(f, grafter.heap, addr=cursor)
+  # Callers must only see the stored response, never the deferred bypass.
+  yield
   return word
 
 
@@ -132,10 +141,14 @@ def link_register(f: Flow, grafter: Grafter, register, port, count, pending):
   f.d.sync += Assert(Value.cast(register) < count, "Graft register index out of bounds")
   addr = register_address(grafter, register)
   previous = yield HeapPort.swap(f, grafter.heap, addr=addr, write=0)
+  yield
   with f.If(previous == 0):
+    # Register the slot decision before issuing a competing resource request.
+    yield
     f.d.on_done += pending.eq(pending + 1)
     yield HeapPort.write(f, grafter.heap, addr=addr, write=port)
   with f.Else():
+    yield
     f.d.on_done += pending.eq(pending - 1)
     yield LinkerPort.link(f, grafter.linker, a=previous, b=port)
 
@@ -150,11 +163,13 @@ def binary(f: Flow, grafter: Grafter, instruction, count, pending, failed):
   with f.If(~valid):
     yield from fail(f, grafter, failed)
   with f.Else():
+    yield
     bases, oom = yield PairAllocPort.alloc(f, grafter.pairs, n_pairs=1)
     with f.If(oom):
       yield from fail(f, grafter, failed, oom=True)
     with f.Else():
       base = f.capture(bases[0])
+      yield
       yield HeapPort.write(f, grafter.heap, addr=base, write=0)
       yield HeapPort.write(f, grafter.heap, addr=Addr.other_half(base), write=0)
       principal = Port.new(instruction.tag, instruction.label, Value.cast(base))
@@ -174,6 +189,7 @@ def nilary(f: Flow, grafter: Grafter, instruction, count, pending, failed, curso
   with f.If(~valid):
     yield from fail(f, grafter, failed)
   with f.Else():
+    yield
     yield from link_register(f, grafter, instruction.r0, port, count, pending)
 
 
@@ -185,7 +201,10 @@ def program(f: Flow, grafter: Grafter):
     failed = f.capture(False)
     allocated = f.capture(Const(0, range(MAX_REGISTER_PAGES + 1)))
     f.d.sync += [grafter.oom.eq(False), grafter.error.eq(False)]
+    yield
     raw = yield HeapPort.read(f, grafter.heap, addr=addr)
+    # Register the BRAM response before header decoding can issue new requests.
+    yield
     header = Graft(raw)
     valid = (
       ~header.error
@@ -197,8 +216,11 @@ def program(f: Flow, grafter: Grafter):
     with f.If(~valid):
       yield from fail(f, grafter, failed)
     with f.Else():
-      needed = (header.next_register + PAGE_SIZE - 1) >> PAGE_SHIFT
+      # Narrow only after checking the full header, retaining MAX_REGISTERS itself.
+      count = header.next_register[:Register.width + 1]
+      needed = ((count + (PAGE_SIZE - 1)) >> PAGE_SHIFT)[:PageId.width + 1]
       with f.While((allocated < needed) & ~failed):
+        yield
         page_ids, oom = yield PageAllocPort.alloc(f, grafter.pages, n_pages=1)
         with f.If(oom):
           yield from fail(f, grafter, failed, oom=True)
@@ -211,7 +233,9 @@ def program(f: Flow, grafter: Grafter):
 
       with f.If(~failed):
         index = f.capture(Const(0, unsigned(Register.width + 1)))
-        with f.While(index < header.next_register):
+        yield
+        with f.While(index < count):
+          yield
           f.d.on_done += index.eq(index + 1)
           yield HeapPort.write(
             f, grafter.heap, addr=register_address(grafter, index),
@@ -222,18 +246,21 @@ def program(f: Flow, grafter: Grafter):
         remaining = f.capture(header.instructions_len)
         pending = f.capture(Const(1, range(MAX_REGISTERS + 1)))
         with f.While((remaining != 0) & ~failed):
-          raw_instruction = yield from read_word(f, grafter, cursor)
+          yield
+          raw_instruction = yield from read_word(f, grafter, cursor, remaining=remaining)
           instruction = Instruction(raw_instruction)
-          f.d.on_done += remaining.eq(remaining - 1)
           with f.If(instruction.binary):
-            yield from binary(f, grafter, instruction, header.next_register, pending, failed)
+            yield
+            yield from binary(f, grafter, instruction, count, pending, failed)
           with f.Else():
-            yield from nilary(f, grafter, instruction, header.next_register, pending, failed, cursor)
+            yield
+            yield from nilary(f, grafter, instruction, count, pending, failed, cursor)
 
         with f.If(~failed & (pending != 0)):
           yield from fail(f, grafter, failed)
 
     with f.While(allocated != 0):
+      yield
       page = Value.cast(grafter.register_pages[(allocated - 1).as_unsigned()])
       f.d.on_done += allocated.eq(allocated - 1)
       yield PageAllocPort.free(f, grafter.pages, n_pages=1, page_ids=page)

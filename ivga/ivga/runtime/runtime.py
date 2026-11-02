@@ -62,26 +62,30 @@ class Runtime(wiring.Component):
                  "entry_grafter", "entry_linker"):
       m.submodules[name] = getattr(self, name)
 
-    heap_arb = m.submodules.heap_arb = HeapArbiter(6)
-    pages_arb = m.submodules.pages_arb = PageAllocArbiter(4)
-    pairs_arb = m.submodules.pairs_arb = PairAllocArbiter(4)
-    active_arb = m.submodules.active_arb = StackArbiter(3, Port2)
+    heap_clients = (self.page_alloc.heap, self.pair_alloc.heap, *self.interact.heap,
+                    self.entry_grafter.heap, self.entry_linker.heap)
+    page_clients = (self.pair_alloc.pages, self.interact.pages, self.entry_grafter.pages)
+    pair_clients = (*self.interact.pairs, self.entry_grafter.pairs, self.entry_linker.alloc)
+    active_clients = (*self.interact.active, self.entry_linker.active)
+
+    # Each resource has one arbitration level; the final client is the host or dispatcher.
+    heap_arb = m.submodules.heap_arb = HeapArbiter(len(heap_clients) + 1)
+    pages_arb = m.submodules.pages_arb = PageAllocArbiter(len(page_clients) + 1)
+    pairs_arb = m.submodules.pairs_arb = PairAllocArbiter(len(pair_clients) + 1)
+    active_arb = m.submodules.active_arb = StackArbiter(len(active_clients) + 1, Port2)
 
     for arb, clients, real in (
-      (heap_arb, (self.page_alloc.heap, self.pair_alloc.heap, self.interact.heap,
-                  self.entry_grafter.heap, self.entry_linker.heap), self.memory.control),
-      (pages_arb, (self.pair_alloc.pages, self.interact.pages, self.entry_grafter.pages),
-       self.page_alloc.control),
-      (pairs_arb, (self.interact.pairs, self.entry_grafter.pairs, self.entry_linker.alloc),
-       self.pair_alloc.control),
-      (active_arb, (self.interact.active, self.entry_linker.active), self.active.control),
+      (heap_arb, heap_clients, self.memory.control),
+      (pages_arb, page_clients, self.page_alloc.control),
+      (pairs_arb, pair_clients, self.pair_alloc.control),
+      (active_arb, active_clients, self.active.control),
     ):
-      for client, port in zip(clients, arb.clients):
+      for client, port in zip(clients, arb.clients[:-1], strict=True):
         wiring.connect(m, client, port)
       wiring.connect(m, arb.real, real)
 
     wiring.connect(m, self.entry_grafter.linker, self.entry_linker.control)
-    self.worklist = active_arb.clients[2]
+    self.worklist = active_arb.clients[-1]
 
     fault_sources = (self.interact, self.entry_linker, *self.interact.linkers)
     fault_bits = []
@@ -103,9 +107,9 @@ class Runtime(wiring.Component):
     for source in fault_sources:
       m.d.comb += source.fault.halt.eq(self.fault.halt | self.failed)
 
-    for host, client in ((self.heap, heap_arb.clients[5]),
-                         (self.pages, pages_arb.clients[3]),
-                         (self.pairs, pairs_arb.clients[3])):
+    for host, client in ((self.heap, heap_arb.clients[-1]),
+                         (self.pages, pages_arb.clients[-1]),
+                         (self.pairs, pairs_arb.clients[-1])):
       with m.If(~self.busy & ~self.start):
         wiring.connect(m, wiring.flipped(host), client)
 
@@ -122,10 +126,13 @@ def program(f: Flow, runtime: Runtime, start: Value):
     addr = f.capture(runtime.entry_addr)
     root = f.capture(runtime.root_port)
     f.d.sync += runtime.busy.eq(True)
+    yield
     yield GrafterPort.graft(f, runtime.entry_grafter, addr=addr, port=root)
 
     with f.While(~runtime.failed & ~runtime.fault.halt & ~runtime.worklist.empty):
+      yield
       next_pair = yield StackPort.pop(f, runtime.worklist)
+      yield
       yield InteractPort.interact(f, runtime.interact, a=next_pair.a, b=next_pair.b)
 
     f.d.sync += [
