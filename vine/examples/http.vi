@@ -21,6 +21,7 @@ fn main_(&io: &IO) -> Result[(), Error] {
 
   io.println("listener ready at http://127.0.0.1:6767");
 
+  let num_visits: N32 = 0;
   while io.forever() {
     io.println("awaiting connection");
 
@@ -33,7 +34,7 @@ fn main_(&io: &IO) -> Result[(), Error] {
     };
 
     let io2 = io.split();
-    match handle_stream(&io2, stream) {
+    match handle_stream(&io2, &num_visits, stream) {
       Ok(()) {}
       Err(err) {
         io.println("error while processing stream: {err.show()}");
@@ -46,7 +47,7 @@ fn main_(&io: &IO) -> Result[(), Error] {
   Ok()
 }
 
-fn handle_stream(&io: &IO, stream: TcpStream) -> Result[(), Error] {
+fn handle_stream(&io: &IO, &num_visits: &N32, stream: TcpStream) -> Result[(), Error] {
   let contents = "";
 
   loop {
@@ -66,6 +67,12 @@ fn handle_stream(&io: &IO, stream: TcpStream) -> Result[(), Error] {
     }
   }
 
+  if !contents.starts_with(&"GET / HTTP/1.1\r\n") {
+    stream.close(&io);
+    return Ok(());
+  }
+
+  num_visits += 1;
   let resp =
 "HTTP/1.1 200 OK\r
 Content-Type: text/html; charset=utf-8\r
@@ -74,17 +81,15 @@ Connection: close\r
 <!DOCTYPE html>
 <html>
 <body>
-  <h1>hello world!</h1>
+  <h1>hello! you are visitor number {num_visits}</h1>
 </body>
 </html>"
 
-  if contents.starts_with(&"GET / HTTP/1.1\r\n") {
-    match stream.write_string(&io, resp) {
-      Ok(()) {}
-      Err(err) {
-        stream.close(&io);
-        return Err(err);
-      }
+  match stream.write_string(&io, resp) {
+    Ok(()) {}
+    Err(err) {
+      stream.close(&io);
+      return Err(err);
     }
   }
 
