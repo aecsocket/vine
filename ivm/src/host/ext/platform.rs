@@ -5,6 +5,8 @@ use std::{
   io::{self, ErrorKind, Read, Write},
   net::{TcpListener, TcpStream},
   sync::{Mutex, MutexGuard},
+  thread,
+  time::Duration,
 };
 
 use vine_util::register::Register;
@@ -28,7 +30,15 @@ pub fn all<'ivm, R: Read, W: Write>(
   stdin: impl Copy + Fn() -> R + Send + Sync + 'ivm,
   stdout: impl Copy + Fn() -> W + Send + Sync + 'ivm,
 ) -> impl Register<Host<'ivm>> {
-  (io_meta(), io_args(args), io_stdio_with(stdin, stdout), io_error(), io_file(), io_tcp())
+  (
+    io_meta(),
+    io_args(args),
+    io_stdio_with(stdin, stdout),
+    io_error(),
+    io_file(),
+    io_tcp(),
+    io_sleep(),
+  )
 }
 
 pub fn io_meta<'ivm>() -> impl Register<Host<'ivm>> {
@@ -37,6 +47,13 @@ pub fn io_meta<'ivm>() -> impl Register<Host<'ivm>> {
     ExtFn("vi:io:merge", |(IO, IO)| IO),
     ExtFn("vi:io:ready", |IO| (true, IO)),
   )
+}
+
+pub fn io_sleep<'ivm>() -> impl Register<Host<'ivm>> {
+  ExtFn("root:io:sleep", |(IO, millis): (IO, u32)| {
+    thread::sleep(Duration::from_millis(u64::from(millis)));
+    IO
+  })
 }
 
 pub fn io_args<'ivm>(args: &'ivm [String]) -> impl Register<Host<'ivm>> {

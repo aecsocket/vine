@@ -22,6 +22,7 @@ fn main_(&io: &IO) -> Result[(), Error] {
   io.println("listener ready at http://127.0.0.1:6767");
 
   let num_visits: N32 = 0;
+  let ios = [];
   while io.forever() {
     io.println("awaiting connection");
 
@@ -29,25 +30,28 @@ fn main_(&io: &IO) -> Result[(), Error] {
       Ok(stream) { stream }
       Err(err) {
         listener.close(&io);
+        for io2 in ios { io.join(io2); }
         return Err(err);
       }
     };
 
     let io2 = io.split();
-    match handle_stream(&io2, &num_visits, stream) {
+    match handle_stream(&io2, stream) {
       Ok(()) {}
       Err(err) {
-        io.println("error while processing stream: {err.show()}");
+        io2.println("error while processing stream: {err.show()}");
       }
     }
-    io.join(io2);
+    ios.push_back(io2);
   }
   listener.close(&io);
+
+  for io2 in ios { io.join(io2); }
 
   Ok()
 }
 
-fn handle_stream(&io: &IO, &num_visits: &N32, stream: TcpStream) -> Result[(), Error] {
+fn handle_stream(&io: &IO, stream: TcpStream) -> Result[(), Error] {
   let contents = "";
 
   loop {
@@ -72,7 +76,12 @@ fn handle_stream(&io: &IO, &num_visits: &N32, stream: TcpStream) -> Result[(), E
     return Ok(());
   }
 
-  num_visits += 1;
+  let num_visits: N32 = 0;
+  for _ in 0..10 {
+    num_visits += 1;
+    io.sleep(500);
+  }
+
   let resp =
 "HTTP/1.1 200 OK\r
 Content-Type: text/html; charset=utf-8\r
@@ -82,6 +91,7 @@ Connection: close\r
 <html>
 <body>
   <h1>hello! you are visitor number {num_visits}</h1>
+  <p>the number above *should* always be a mul of 10</p>
 </body>
 </html>"
 
@@ -107,6 +117,11 @@ fn .join(&io: &IO, other: IO) {
   safe $ivy {
     ${io} = vi:ext#2[vi:io:merge](${other} ${~io})
   }
+}
+
+/// Blocks the executing worker for at least the given number of milliseconds.
+pub fn .sleep(&io: &IO, millis: N32) {
+  safe $ivy { ${io} = vi:ext#2[root:io:sleep](${millis} ${~io}) }
 }
 
 // AI generated slop to get ivm bindings to work
