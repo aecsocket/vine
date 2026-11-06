@@ -1,6 +1,111 @@
 use #root::IO::File::Error;
 use #root::Ext;
 
+
+pub fn main(&io: &IO) {
+  match main_(&io) {
+    Ok(()) {}
+    Err(err) {
+      io.println("error: {err.show()}");
+    }
+  }
+}
+
+fn main_(&io: &IO) -> Result[(), Error] {
+  let listener = match TcpListener::open(&io, "127.0.0.1:6767") {
+    Ok(listener) { listener }
+    Err(err) {
+      return Err(err);
+    }
+  };
+
+  io.println("listener ready at http://127.0.0.1:6767");
+
+  while io.forever() {
+    io.println("awaiting connection");
+
+    let stream = match listener.accept(&io) {
+      Ok(stream) { stream }
+      Err(err) {
+        listener.close(&io);
+        return Err(err);
+      }
+    };
+
+    let io2 = io.split();
+    match handle_stream(&io2, stream) {
+      Ok(()) {}
+      Err(err) {
+        io.println("error while processing stream: {err.show()}");
+      }
+    }
+    io.join(io2);
+  }
+  listener.close(&io);
+
+  Ok()
+}
+
+fn handle_stream(&io: &IO, stream: TcpStream) -> Result[(), Error] {
+  let contents = "";
+
+  loop {
+    match stream.read_char(&io) {
+      Ok(Some(char)) {
+        contents!.push_back(char);
+        if contents.ends_with(&"\r\n\r\n") {
+          break;
+        }
+        continue;
+      }
+      Ok(None()) { break; }
+      Err(err) {
+        stream.close(&io);
+        return Err(err);
+      }
+    }
+  }
+
+  let resp =
+"HTTP/1.1 200 OK\r
+Content-Type: text/html; charset=utf-8\r
+Connection: close\r
+\r
+<!DOCTYPE html>
+<html>
+<body>
+  <h1>hello world!</h1>
+</body>
+</html>"
+
+  if contents.starts_with(&"GET / HTTP/1.1\r\n") {
+    match stream.write_string(&io, resp) {
+      Ok(()) {}
+      Err(err) {
+        stream.close(&io);
+        return Err(err);
+      }
+    }
+  }
+
+  stream.close(&io);
+  Ok()
+}
+
+fn .split(&io: &IO) -> IO {
+  safe $ivy {
+    ${io} = vi:ext#1[vi:io:split](^ ${~io})
+  }
+}
+
+fn .join(&io: &IO, other: IO) {
+  safe $ivy {
+    ${io} = vi:ext#2[vi:io:merge](${other} ${~io})
+  }
+}
+
+// AI generated slop to get ivm bindings to work
+
 pub type TcpListener;
 
 pub mod TcpListener {
@@ -68,10 +173,11 @@ pub mod TcpStream {
     };
     result as Result[(), Error]
   }
-}
 
-pub fn main(&io: &IO) {
-  while io.forever() {
-    // todo
+  pub fn .write_string(&self: &TcpStream, &io: &IO, string: String) -> Result[(), Error] {
+    for char in string {
+      self.write_char(&io, char).try;
+    }
+    Ok()
   }
 }
