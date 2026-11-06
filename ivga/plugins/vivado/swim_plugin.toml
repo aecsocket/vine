@@ -1,0 +1,11 @@
+[commands.vivado]
+after = "SpadeBuild"
+script = ['python3 "${PLUGIN_DIR}/run.py" vivado "${PROJECT_ROOT}" %args%']
+
+[commands.program]
+after = "Start"
+script = ['python3 "${PLUGIN_DIR}/run.py" program "${PROJECT_ROOT}" %args%']
+
+[commands.test]
+after = "SpadeBuild"
+script = ['python3 "${PLUGIN_DIR}/run.py" test "${PROJECT_ROOT}" %args%']

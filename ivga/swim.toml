@@ -1,0 +1,4 @@
+name = "ivga"
+
+[plugins.vivado]
+path = "plugins/vivado"

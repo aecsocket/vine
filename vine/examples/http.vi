@@ -1,0 +1,77 @@
+use #root::IO::File::Error;
+use #root::Ext;
+
+pub type TcpListener;
+
+pub mod TcpListener {
+  pub impl : Show[TcpListener];
+  pub impl : Ext[TcpListener] = safe Ext::identity;
+
+  pub fn open(&io: &IO, addr: String) -> Result[TcpListener, Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_listener:open](${addr as Ext} ^ ${~io})
+    };
+    result as Result[TcpListener, Error]
+  }
+
+  pub fn .close(self: TcpListener, &io: &IO) {
+    safe $ivy { ${io} = vi:ext#2[root:io:tcp_listener:close](${self} ${~io}) }
+  }
+
+  /// Accepts one connection, keeping the listener open for further connections.
+  pub fn .accept(&self: &TcpListener, &io: &IO) -> Result[TcpStream, Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_listener:accept](${self} ^ ${~io} ${~self})
+    };
+    result as Result[TcpStream, Error]
+  }
+}
+
+pub type TcpStream;
+
+pub mod TcpStream {
+  pub impl : Show[TcpStream];
+  pub impl : Ext[TcpStream] = safe Ext::identity;
+
+  pub fn .close(self: TcpStream, &io: &IO) {
+    safe $ivy { ${io} = vi:ext#2[root:io:tcp_stream:close](${self} ${~io}) }
+  }
+
+  /// Reads one byte, returning None on EOF.
+  pub fn .read_byte(&self: &TcpStream, &io: &IO) -> Result[Option[N32], Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_stream:read_byte](${self} ^ ${~io} ${~self})
+    };
+    let byte = (result as Result[N32, Error]).try;
+    Ok(if byte == N32::maximum { None() } else { Some(byte) })
+  }
+
+  /// Reads one UTF-8 character, returning None on EOF.
+  pub fn .read_char(&self: &TcpStream, &io: &IO) -> Result[Option[Char], Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_stream:read_char](${self} ^ ${~io} ${~self})
+    };
+    let char = (result as Result[Char, Error]).try;
+    Ok(if char == N32::maximum as Char { None() } else { Some(char) })
+  }
+
+  pub fn .write_byte(&self: &TcpStream, &io: &IO, byte: N32) -> Result[(), Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#3[root:io:tcp_stream:write_byte](${self} ${byte} ^ ${~io} ${~self})
+    };
+    result as Result[(), Error]
+  }
+
+  pub fn .write_char(&self: &TcpStream, &io: &IO, char: Char) -> Result[(), Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#3[root:io:tcp_stream:write_char](${self} ${char} ^ ${~io} ${~self})
+    };
+    result as Result[(), Error]
+  }
+}
+
+pub fn main(&io: &IO) {
+  while io.forever() {
+    // todo
+  }
+}

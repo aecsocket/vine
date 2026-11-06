@@ -1,0 +1,59 @@
+from amaranth import *
+from amaranth.lib import wiring
+from amaranth.sim import Simulator
+from ivga0.mem.heap import Heap, HeapArbiter
+from ivga0.mem.pair_alloc import ADDR_EMPTY, PairAlloc
+from ivga0.mem.stack import Stack
+from ivga0.runtime.linker import Linker
+
+from ivga0 import Port, Port2
+
+PERIOD = 1e-6
+
+m = Module()
+heap = m.submodules.heap = Heap()
+heap_arb = m.submodules.heap_arb = HeapArbiter(2)
+alloc = m.submodules.alloc = PairAlloc(8)
+active = m.submodules.active = Stack(Port2, 8)
+dut = m.submodules.linker = Linker()
+wiring.connect(m, heap_arb.clients[0], alloc.heap)
+wiring.connect(m, heap_arb.clients[1], dut.heap)
+wiring.connect(m, heap_arb.real, heap.control)
+wiring.connect(m, dut.alloc, alloc.control)
+wiring.connect(m, dut.active, active.control)
+
+async def testbench_foo(ctx):
+  ctx.set(heap.memory.data[0], Port.none())
+  ctx.set(heap.memory.data[1], Port.wire(2))
+  ctx.set(heap.memory.data[2], Port.eraser())
+  ctx.set(alloc.empty, 4) # Reserve slots 0..3.
+  ctx.set(dut.req_link, True)
+  ctx.set(dut.req_a, Port.wire(0))
+  ctx.set(dut.req_b, Port.wire(1))
+  await ctx.tick()
+  ctx.set(dut.req_link, False)
+
+  for _ in range(20):
+    if ctx.get(dut.done):
+      break
+    await ctx.tick()
+  else:
+    raise AssertionError("link did not complete within 20 cycles")
+  assert ctx.get(heap.memory.data[0]) == Port.eraser().as_value().value
+  # Following 1 -> 2 -> Erase frees slots 1 then 2: 2 -> 1 -> EMPTY.
+  assert ctx.get(alloc.free_count) == 2
+  assert ctx.get(alloc.free_head) == 2
+  assert ctx.get(heap.memory.data[2]) == 1
+  assert ctx.get(heap.memory.data[1]) == ADDR_EMPTY.value
+  assert ctx.get(alloc.empty) == 4
+  assert ctx.get(alloc.stat_frees) == 2
+
+  await ctx.tick()
+  assert not ctx.get(dut.done)
+  assert ctx.get(dut.granted)
+
+sim = Simulator(m)
+sim.add_clock(PERIOD)
+sim.add_testbench(testbench_foo)
+with sim.write_vcd("build/test_linker.vcd"):
+  sim.run()

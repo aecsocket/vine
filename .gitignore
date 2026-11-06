@@ -5,3 +5,6 @@ tests/snaps/**/timing.txt
 
 # Nix build outputs
 result
+
+.Xil
+vivado.*

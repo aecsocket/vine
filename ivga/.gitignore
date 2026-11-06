@@ -1,9 +1,2 @@
-__pycache__
-obj_dir/
 build/
-abc.history
-ivga_vivado/
-vivado*.jou
-vivado*.log
-vivado*.str
-.Xil/
+.surfer/

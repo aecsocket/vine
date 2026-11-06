@@ -3,6 +3,7 @@ use std::{
   format,
   fs::{File, OpenOptions},
   io::{self, ErrorKind, Read, Write},
+  net::{TcpListener, TcpStream},
   sync::{Mutex, MutexGuard},
 };
 
@@ -27,7 +28,7 @@ pub fn all<'ivm, R: Read, W: Write>(
   stdin: impl Copy + Fn() -> R + Send + Sync + 'ivm,
   stdout: impl Copy + Fn() -> W + Send + Sync + 'ivm,
 ) -> impl Register<Host<'ivm>> {
-  (io_meta(), io_args(args), io_stdio_with(stdin, stdout), io_error(), io_file())
+  (io_meta(), io_args(args), io_stdio_with(stdin, stdout), io_error(), io_file(), io_tcp())
 }
 
 pub fn io_meta<'ivm>() -> impl Register<Host<'ivm>> {
@@ -129,6 +130,40 @@ pub fn io_file<'ivm>() -> impl Register<Host<'ivm>> {
   )
 }
 
+pub fn io_tcp<'ivm>() -> impl Register<Host<'ivm>> {
+  (
+    ExtFn("root:io:tcp_listener:open", |(_, addr): (IO, String)| (TcpListener::bind(addr), IO)),
+    ExtFn("root:io:tcp_listener:close", |_: (IO, Boxed<TcpListener>)| IO),
+    ExtFn("root:io:tcp_listener:accept", |(_, listener): (IO, Boxed<TcpListener>)| {
+      (listener.accept().map(|(stream, _)| stream), IO, listener)
+    }),
+    ExtFn("root:io:tcp_stream:close", |_: (IO, Boxed<TcpStream>)| IO),
+    ExtFn("root:io:tcp_stream:read_byte", |(_, mut stream): (IO, Boxed<TcpStream>)| {
+      let mut buf = [0u8];
+      let out = stream.read(&mut buf).map(|read| if read == 0 { u32::MAX } else { buf[0] as u32 });
+      (out, IO, stream)
+    }),
+    ExtFn("root:io:tcp_stream:read_char", |(_, stream): (IO, Boxed<TcpStream>)| {
+      let result = match read_char(&*stream) {
+        Ok((_, Some(char))) => Ok(char as u32),
+        Ok((0, None)) => Ok(u32::MAX),
+        Ok(_) => Ok(char::REPLACEMENT_CHARACTER as u32),
+        Err(e) => Err(e),
+      };
+      (result, IO, stream)
+    }),
+    ExtFn("root:io:tcp_stream:write_byte", |(_, mut stream, byte): (IO, Boxed<TcpStream>, u32)| {
+      (stream.write_all(&[byte as u8]).map(|_| Nil), IO, stream)
+    }),
+    ExtFn(
+      "root:io:tcp_stream:write_char",
+      |(_, mut stream, char): (IO, Boxed<TcpStream>, char)| {
+        (write!(stream, "{char}").map(|_| Nil), IO, stream)
+      },
+    ),
+  )
+}
+
 pub fn io_error<'ivm>() -> impl Register<Host<'ivm>> {
   (
     ExtFn("root:io:error:code", |error: Boxed<io::Error>| {
@@ -153,6 +188,14 @@ pub fn io_error<'ivm>() -> impl Register<Host<'ivm>> {
 
 impl<'ivm> ExtTyBoxed<'ivm> for File {
   type With<'x> = File;
+}
+
+impl<'ivm> ExtTyBoxed<'ivm> for TcpListener {
+  type With<'x> = TcpListener;
+}
+
+impl<'ivm> ExtTyBoxed<'ivm> for TcpStream {
+  type With<'x> = TcpStream;
 }
 
 impl<'ivm> ExtTyBoxed<'ivm> for io::Error {
