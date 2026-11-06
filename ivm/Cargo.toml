@@ -2,11 +2,13 @@
 name = "ivm"
 version = "0.0.0"
 edition = "2024"
+rust-version.workspace = true
 
 [dependencies]
 ivy = { path = "../ivy", default-features = false }
 vine-util = { path = "../util", default-features = false }
 hashbrown = "0.14.5"
+parking_lot = { version = "0.13.0", features = ["arc_lock", "send_guard"] }
 
 [lints.clippy]
 absolute_paths = "warn"

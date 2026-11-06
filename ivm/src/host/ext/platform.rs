@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 use std::{
   format,
   fs::{File, OpenOptions},
@@ -38,6 +38,7 @@ pub fn all<'ivm, R: Read, W: Write>(
     io_file(),
     io_tcp(),
     io_sleep(),
+    io_mutex::<u32>("n32"),
   )
 }
 
@@ -196,10 +197,31 @@ pub fn io_error<'ivm>() -> impl Register<Host<'ivm>> {
       (code, error)
     }),
     ExtFn("root:io:error:message", |error: Boxed<io::Error>| {
-      let message = format!("{:?}", &*error);
+      let message = format!("{:?}", *error);
       (message, error)
     }),
     ExtFn("root:io:error:drop", |_: io::Error| {}),
+  )
+}
+
+type ArcMutex<T> = Arc<parking_lot::Mutex<Option<T>>>;
+type ArcMutexGuard<T> = parking_lot::ArcMutexGuard<parking_lot::RawMutex, Option<T>>;
+
+pub fn io_mutex<'ivm, T: ExtTyRegister<'ivm>>(path: &'static str) -> impl Register<Host<'ivm>> {
+  let fqn = format!("root:io:mutex:{path}");
+  (
+    ExtFn(format!("{fqn}:new"), |init: T| Arc::new(parking_lot::Mutex::new(Some(init)))),
+    ExtFn(format!("{fqn}:fork"), |mutex: Boxed<ArcMutex<T>>| (Arc::clone(&mutex), mutex)),
+    ExtFn(format!("{fqn}:drop"), |_: Boxed<ArcMutex<T>>| {}),
+    ExtFn(format!("{fqn}:lock"), |(_, mutex): (IO, Boxed<ArcMutex<T>>)| {
+      let mut guard = mutex.lock_arc();
+      let t = guard.take().expect("somehow managed to lock twice");
+      (t, guard, IO, mutex)
+    }),
+    ExtFn(format!("{fqn}:unlock"), |(_, mut guard, t): (IO, Boxed<ArcMutexGuard<T>>, T)| {
+      assert!(guard.replace(t).is_none(), "somehow managed to unlock twice");
+      IO
+    }),
   )
 }
 
@@ -217,6 +239,14 @@ impl<'ivm> ExtTyBoxed<'ivm> for TcpStream {
 
 impl<'ivm> ExtTyBoxed<'ivm> for io::Error {
   type With<'x> = io::Error;
+}
+
+impl<'ivm, T: ExtTyRegister<'ivm>> ExtTyBoxed<'ivm> for ArcMutex<T> {
+  type With<'x> = ArcMutex<T::With<'x>>;
+}
+
+impl<'ivm, T: ExtTyRegister<'ivm>> ExtTyBoxed<'ivm> for ArcMutexGuard<T> {
+  type With<'x> = ArcMutexGuard<T::With<'x>>;
 }
 
 /// Attempts to read a single unicode character from `reader`, returning the

@@ -2,6 +2,7 @@
 name = "ivy"
 version = "0.0.0"
 edition = "2024"
+rust-version.workspace = true
 
 [dependencies]
 unicode-id-start = "1.4.0"

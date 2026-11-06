@@ -4,6 +4,7 @@ use core::{
   mem::{ManuallyDrop, transmute_copy},
 };
 
+use alloc::borrow::Cow;
 use ivy::name::{NameId, Table};
 use vine_util::register::{Register, Registry};
 
@@ -139,12 +140,12 @@ impl<'ivm> Host<'ivm> {
 }
 
 #[allow(nonstandard_style)]
-pub fn ExtFn<'ivm, const I: usize, const O: usize, W, F: ExtFn<'ivm, I, O, W>>(
-  path: &str,
+pub fn ExtFn<'p, 'ivm, const I: usize, const O: usize, W, F: ExtFn<'ivm, I, O, W>>(
+  path: impl Into<Cow<'p, str>>,
   f: F,
 ) -> impl Register<Host<'ivm>> {
   pub struct _ExtFn<'p, const I: usize, const O: usize, W, F> {
-    path: &'p str,
+    path: Cow<'p, str>,
     f: F,
     phantom: PhantomData<([(); I], [(); O], W)>,
   }
@@ -153,11 +154,11 @@ pub fn ExtFn<'ivm, const I: usize, const O: usize, W, F: ExtFn<'ivm, I, O, W>>(
     for _ExtFn<'p, I, O, W, F>
   {
     fn register(self, (host, table): (&mut Host<'ivm>, &mut Table)) {
-      host.register_ext_fn(table, self.path, self.f);
+      host.register_ext_fn(table, &self.path, self.f);
     }
   }
 
-  _ExtFn { path, f, phantom: PhantomData }
+  _ExtFn { path: path.into(), f, phantom: PhantomData }
 }
 
 pub trait Live<'ivm>: 'ivm + Send + Sync {}
