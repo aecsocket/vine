@@ -3,9 +3,15 @@
     "Vine": ["vi"]
   },
   "lsp": {
+    "swim": {
+      "binary": {
+        "path": "/var/home/boris/Projects/vine/ivga/tools/bin/spade-language-server",
+        "arguments": []
+      }
+    },
     "slang": {
       "binary": {
-        "arguments": ["-Wall"]
+        "arguments": []
       }
     },
     "vine": {

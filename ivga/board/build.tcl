@@ -5,6 +5,9 @@ if {[file normalize [pwd]] ne [file join $root build]} {
 }
 # Never leave a previous successful bitstream after a failed new build.
 file delete -force ivga.bit
+# Non-project flow: load the installed XPM sources before synthesis.
+read_verilog -sv -library xpm [file join $::env(XILINX_VIVADO) data ip xpm xpm_memory hdl xpm_memory.sv]
+read_verilog -sv [file join $root src mem bram.sv]
 read_verilog -sv [file join $root build spade.sv]
 
 read_xdc [file join $root board arty.xdc]

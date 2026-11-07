@@ -3,7 +3,7 @@ use std::{
   ffi::OsStr,
   fmt, fs,
   io::{self, IsTerminal, Read, StdoutLock, Write, stderr, stdin, stdout},
-  path::{Path, PathBuf},
+  path::{self, Path, PathBuf},
   process::{Command, Stdio, exit},
   sync::mpsc,
   thread,
@@ -387,7 +387,7 @@ pub struct VineWatchCommand {
 impl VineWatchCommand {
   pub fn execute(self) -> Result<()> {
     anyhow::ensure!(self.build.out.is_some(), "watch requires an output file (-o <OUTPUT>)");
-    let input = std::path::absolute(&self.build.compile.main.path)?;
+    let input = path::absolute(&self.build.compile.main.path)?;
     let parent = input.parent().unwrap();
     let (send, recv) = mpsc::channel();
     let mut watcher = RecommendedWatcher::new(send, Default::default())?;

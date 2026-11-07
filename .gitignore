@@ -8,3 +8,6 @@ result
 
 .Xil
 vivado.*
+
+# Machine-specific Slang library paths
+/.slang/

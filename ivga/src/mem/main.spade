@@ -1,0 +1,64 @@
+mod pages;
+pub mod bram;
+
+use std::mem::{WritePort, ReadPort};
+
+pub struct Word {
+    value: uint<64>,
+}
+
+pub struct Addr {
+    value: uint<16>,
+}
+
+pub enum Tag {
+    Wire,
+    Graft,
+    Erase,
+    ExtVal,
+    Comb,
+    ExtFn,
+}
+
+pub struct Port {
+    tag: Tag,
+    payload: uint<45>,
+    label: uint<16>,
+}
+
+pub entity heap(clk: clock) -> (HeapWrite, HeapRead) {
+    let (write_odd, read_odd) = inst std::mem::dp_bram::<16, Word, 65535>(clk, clk);
+    let (write_even, read_even) = inst std::mem::dp_bram::<16, Word, 65535>(clk, clk);
+    (
+        HeapWrite { even: write_even, odd: write_odd },
+        HeapRead { even: read_even, odd: read_odd },
+    )
+}
+
+pub struct HeapWrite {
+    even: WritePort<16, Word>,
+    odd: WritePort<16, Word>,
+}
+
+pub struct HeapRead {
+    even: ReadPort<16, Word>,
+    odd: ReadPort<16, Word>,
+}
+
+impl HeapWrite {
+    pub fn write(self, addr: Addr, even: Option<Word>, odd: Option<Word>) {
+        let base = addr.value >> 1;
+        self.even.write(base, even);
+        self.odd.write(base, odd);
+    }
+}
+
+impl HeapRead {
+    pub pipeline(1) read(wire self, clk: clock, addr: Addr) -> (Word, Word) {
+        let base = addr.value >> 1;
+        let even = self.even.inst(1) read(clk, base >> 1);
+        let odd = self.odd.inst(1) read(clk, base >> 1);
+    reg;
+        (even, odd)
+    }
+}

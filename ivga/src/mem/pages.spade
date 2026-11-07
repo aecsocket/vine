@@ -1,0 +1,20 @@
+pub struct PageId {
+    // 1024 pages; 64 words per page; 512 bytes per page
+    value: uint<10>,
+}
+
+// pub struct PageAlloc {
+//     in_alloc: inv bool,
+//     out_alloc_page: PageId,
+//     in_free: inv Option<PageId>,
+// }
+//
+// impl PageAlloc {
+//     pub fn alloc(self, alloc: bool) -> Option<PageId> {
+//
+//     }
+// }
+//
+// pub entity page_alloc(clk: clock) -> PageAlloc {
+//     reg(clk) empty: PageId reset(rst: PageId(0))
+// }

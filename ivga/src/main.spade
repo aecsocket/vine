@@ -1,4 +1,5 @@
 mod top;
+mod mem;
 
 #[no_mangle]
 entity main(clk: clock, rst: bool) -> bool {
