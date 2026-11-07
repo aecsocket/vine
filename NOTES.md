@@ -156,3 +156,256 @@ So, also if we talk to onboard DRAM then like, we WILL need to handle caching. T
 Also when I start reimpl'ing stuff, then I will need to take WNS into account a lot more. Cause obviously this caused problems for me lol.
 
 One thing I really need to start thinking about: how will the program load another program which it hasn't been programmed with?
+
+## 7 Nov
+
+Investigating shared mutable state in Vine. I wrote a dummy http server `http.vi` which has a `num_visits: N32` as shared global state among all route handlers. It accepts a tcp stream, makes an `io.split() = io2`, uses that `io2` for the task, and pushes `io2` onto a list. after the `while io.forever()` we merge all the `io2`s into the original `io` - this is essentially fork/join model. Now, the interesting part is that `num_visits` - each `handle_stream(io2, &num_visits`) gets a ref to that. But that's BAD - it means that every stream handle task is serialized on `num_visits`. even tho we split the IO, we still need to finish `handle_stream` to know what the new value of `num_visits` will be. So we've unintentionally serialized all our tasks.
+
+My initial solution was to make a `Mutex` extrinsic which makes a critical section by blocking the thread - its literally just a wrapper around a rust mutex nothing fancy. But, obviously this blocks the worker, which is bad. Instead I was pointed to the `atomic` branch which uses a new type called `#root::Atomic`. Here's how it works:
+
+```rs
+// make a new atomic counter
+let counter = Atomic::new[N32](0);
+
+// use the counter
+counter.access((), fn((), &count: &N32) {
+  count += 1;
+});
+```
+
+Explanation of the syntax:
+- `.access((), ..)` - the `()` is what this access *depends on*.
+
+  So, in order to access `counter`, we must first wait for `()` to be available to the IVM - that is, we *await* `()`. However, `()` is trivially awaitable - it's always ready. So this is essentially: for any `t: Atomic[T]`, `t.access((), f)` is equivalent to `f(the value under t)`.
+
+- `.access(.., fn((), ..))` the `()` in the `fn` sig is the same context type passed in as the first argument to `access`.
+
+  So this is basically saying, "once you're inside this `fn` body, *both* the context you wanted and the atomic counter are available*.
+
+This kinda sounds like a coroutine, but I think that's the wrong mental model here. Since the IVM doesn't really have the concept of tasks or awaiting.
+
+In the internal machinery, await looks like this:
+
+```rs
+pub trait[T] Await {
+  fn _await[F; fn F(T)](value: T, f: F);
+}
+
+pub impl tuple_nil: Await[()] {
+  fn _await[F; fn F(())]((), f: F) {
+    f(())
+  }
+}
+
+pub impl n32: Await[N32] {
+  fn _await[F; fn F(N32)](value: N32, f: F) {
+    if value == 0 {
+      f(value)
+    } else {
+      f(value)
+    }
+  }
+}
+```
+
+Basically the way to read this: `Await` lets you say, "if `Await[T]` (basically rust `T: Await`), wait for `t: T` to resolve to a real, actual value in the machine, then run `f(t)`".
+
+Now, from a sequential programming model, this kinda doesn't make sense. If you call a function `some_val.do_await(|the_same_val| {})`, then, like... you already *have* `some_val` to call `do_await` on it! Why the hell would you need to access it in a closure? You literally *have it in your CPU register* (or your stack or wherever). In the IVM, this isn't the case! Saying `let x = some_val.do_some_fn()` just says, "connect the place `x` to the result of `some_val.do_some_fn()` - but I have no clue when that'll happen". But because we're more describing a *graph of dependencies* here, then it's not guaranteed that `some_val` is actually available at this point in the code flow.
+
+For example, take this code:
+```rs
+fn foo() {
+  let x = 6 + 7;
+  let y = do_a_computation();
+}
+```
+
+In a traditional CPU, this would emit assembly like:
+```asm
+mov r1, 6
+mov r2, 7
+add r3, r1, r2 ; register r3 is used for x
+
+jmp do_a_computation
+mov r4, ret_val ; register r4 is used for y
+```
+
+Written like this, this implies a sequential dependency between r3 and r4, because assembly and machine code represents a step-by-step series of instructions to do. Obviously there isn't a dependency between r3 and r4 here though; and modern CPUs know this. That's why they do out-of-order execution and try to figure out on the fly whether r3 and r4 depend on each other, and if not they can reorder these if it makes more sense for performance.
+
+However, the compiler *already knows this data dependency!* We shouldn't have to force the CPU to do heuristics to figure this out; we already *knew this when we wrote the damn machine code!* So Vine would see the above code, and build a net that instead looks like:
+- wire `x` is the result of `vi:n32:add(ivm:n32#6 ivm:n32#7)`
+- wire `y` is the result of `ivm:graft[:do_a_computation]`
+
+Note that this is explicitly **not** a list of instructions to do step-by-step. It just tells the computer, "if you ever want to figure out what `x` is, then do `vi:n32:add(..)`"; NOT "add 6 and 7, then put it into x". It's always possible that we just never use `x`:
+
+```rs
+fn foo() {
+  let x = 6 + 7;
+}
+```
+
+`foo` doesn't output anything, it's entirely pure, so the whole `6 + 7` computation is wasted, so the computer will never even ask what `x` resolves to; nothing ever wants to know what `x` is.
+
+Anyway, how does this relate to `Await`? Imagine we have this code:
+```rs
+let counter: N32 = 0;
+
+let do_an_expensive_calc = fn(&io: &IO) { io.sleep(1000); 1337 };
+let expensive_value: N32 = do_an_expensive_calc(&io);
+
+counter += expensive_value;
+```
+
+We want to add `expensive_value` (which we only know after a really complex computation) to `count`, and the code above perfectly encodes the dependency chain here:
+
+- the final value of `counter`
+  - ..depends on the current value of `counter` and `expensive_value`
+  - ..`counter` is already 0 as we know
+  - ..`expensive_value` depends on `io.sleep(1000)` finishing
+
+Everything is cool and awesome.
+
+Now take this code:
+```rs
+fn main(&io: &IO) {
+  let tcp_listener = open_http_server(&io);
+  while io.forever() {
+    let tcp_stream = tcp_listener.accept(&io);
+    let io2 = io.split();
+    handle_http_request(&io2, tcp_stream);
+  }
+}
+
+fn handle_http_request(&io: &IO, tcp_stream: &TcpStream) {
+  let some_value = do_db_ops(&io);
+  tcp_stream.write_html("<h1>val = {some_value}</h1>");
+}
+
+fn do_db_ops(&io: &IO) -> N32 {
+  io.sleep(1000);
+  1337
+}
+```
+
+Here, our goal is to listen for incoming HTTP requests, then do some expensive processing based on that request (1 second!), then return the result to the caller. As written, this code works perfectly - because notice the dependency chain:
+- `tcp_stream` depends on `tcp_listener.accept(&io)`, which depends on `&io`
+- where do we get `io` from?
+  - on the first iteration, it comes from the `io` handle that we got given in `main`
+  - on subsequent iterations, it comes from doing the `io.split()` call - remember that `io2 = io.split()` desugars to `(io, io2) = split(io)`, so we need `io.split()` to finish before we get the `io` for the next `io.forever()` iteration
+- `handle_http_request` only depends on `io2`, which is fully independent of `io` after the `io.split()` call
+  - therefore, **we don't have to wait for `handle_http_request` to finish, to process the next `io.forever()` iteration!**
+
+This is INCREDIBLY POWERFUL!!! In Rust, you'd have to do `std::thread::spawn(|| handle_http_request(..))` or `tokio::spawn(|handle_http_request(..))` - in Vine this is **entirely unnecessary** due to how dependencies, concurrency, and parallelism works. You just *say what you want to happen*, rather than *how you want the OS/task runtime to do it* (`tokio::spawn` etc.)
+
+BUT - there is a problem with this approach. Consider this:
+```rs
+fn main(&io: &IO) {
+  let num_visits: N32 = 0; // <-- new!
+  
+  let tcp_listener = open_http_server(&io);
+  while io.forever() {
+    let tcp_stream = tcp_listener.accept(&io);
+    let io2 = io.split();
+    handle_http_request(&io2, &num_visits, tcp_stream);
+  }
+}
+
+fn handle_http_request(&io: &IO, &num_visits: &N32 tcp_stream: &TcpStream) {
+  let some_value = do_db_ops(&io);
+  num_visits += 1; // <-- new!
+  tcp_stream.write_html("<h1>val = {some_value}, you are visitor number {num_visits}</h1>");
+}
+
+fn do_db_ops(&io: &IO) -> N32 {
+  io.sleep(1000);
+  1337
+}
+```
+
+We've added a `num_visits` - each HTTP request will do expensive database ops, then increment the visits counter (or in the opposite order; doesn't matter for this example). Now notice what happens with our dependency chain:
+- we need `io` for the `io2 = io.split()`, and for the `handle_http_request(io2, ..)`
+  - on the first iter, we get it from `main(&io)`
+  - on subsequent iters, we get it from the `io` left over after `io.split()`
+  - everything is OK like before
+- we *also* need the latest value of `num_visits`; where do we get that from?
+  - on the first iter, it comes from `let num_visits: N32 = 0` - no problems here
+  - on subsequent iters, we **have to wait** until `handle_http_request` is done with the `num_visits` counter - this means we **have to wait** for `do_db_ops`
+  - this means that, to start the next `io.forever()` iteration, we have to have `num_visits` available, which is **only available after the last `handle_http_request` is done**
+
+We have accidentally serialized our whole HTTP server!
+
+Well, shit. What do we do?
+
+`Atomic[T]` of course!
+
+```rs
+fn main(&io: &IO) {
+  let num_visits = Atomic::new[&N32](&0); // <-- new!
+  
+  let tcp_listener = open_http_server(&io);
+  while io.forever() {
+    let tcp_stream = tcp_listener.accept(&io);
+    let io2 = io.split();
+    handle_http_request(&io2, num_visits.fork(), tcp_stream);
+  }
+}
+
+fn handle_http_request(&io: &IO, num_visits: Atomic[N32], tcp_stream: &TcpStream) {
+  let some_value = do_db_ops(&io);
+
+  // new!
+  let num_visits_now = num_visits.access((), fn((), &num: &N32) {
+    num += 1;
+    num_visits_now
+  });
+  
+  tcp_stream.write_html("<h1>val = {some_value}, you are visitor number {num_visits_now}</h1>");
+}
+
+fn do_db_ops(&io: &IO) -> N32 {
+  io.sleep(1000);
+  1337
+}
+```
+
+Now our dependency chain has changed:
+- to do the next iteration of `io.forever()`, we require `io` and `num_visits` to be available
+  - `io` is fine, as discussed before
+  - `num_visits` is never consumed or referenced by `handle_http_request` - instead, we make a *copy* of `num_visits` (`num_visits.fork()`), and pass that copy into the function
+  - this leaves the original `num_visits` immediately accessible for the next iteration
+
+So we've solved the "don't accidentally serialize requests" part. What about actually using the counter? How do you get the `N32` out of an `Atomic[N32]`?
+
+That's where `Atomic[T]::access` comes in - you give it 2 things:
+- a context `C`, in our case `()`
+- a function `fn(C, T)` to run **once the context and atomic value are available**
+
+The semantics of this operation is: once the context and the value are ready to use, *then* we run the `fn()` which increments `num += 1`, and gives us back the new `num_visits_now`. So it gives us a way to sorta "join" on two values being available, then do an op on it.
+
+Anything inside the function is effectively the critical section of this atomic - no other work can be done on this `num_visits` atomic while the function is being reduced to normal form. Once the `num_visits_now` (the final value) has been computed, the underlying atomic value is now available again, and the condition ("both the context and value are available") is satisfied for the next caller.
+
+Why the context? Well, our `access` might require something from the environment:
+
+```rs
+let how_much_we_increment_num_visits_by = do_db_ops(&io);
+
+// new!
+let num_visits_now = num_visits.access(
+  how_much_we_increment_num_visits_by,
+  fn(hmwinvb, &num: &N32) {
+    num += hmwinvb;
+    num_visits_now
+  }
+);
+```
+
+This gives us a way to explicitly say, "wait for the db op to finish, *then* enter the critical section".
+
+So we don't even need any mutexes or blocking to express this - all of this can be done with regular IVM constructions like ports and wires! How? I still don't fully understand this part, but the basic idea is that we add the critical section work to the worklist *only once its deps are satisfied*; and to satisfy the 2nd dep (the "value is available" dep), that can only be done *once the previous caller has exited the critical section*, and has returned the `value` to its original place.
+
+I forgot to mention how this ties into the `if value == 0 { f() } else { f() }` stuff. That is admittedly really weird code, but there's a simple reason for it:
+- `value` is an extrinsic value (it's a `vi:n32`).
+- There isn't a way to inspect an extrinsic value, apart from through extrinsic calls (like `vi:n32:eq`, which is what `value == 0` desguars to).
+- We want to only evaluate `f()` once `value` is ready - the `Atomic` internally does `context.await(..)`, so `value` is the `context` here.
+- Therefore, to establish this "wait-until" relationship, we must depend on *inspection* of the extrinsic value, which would require the IVM to resolve it to a real value.
+- In the case of `vi:n32`, we do this via a `vi:n32:eq` call.

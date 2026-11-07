@@ -7,10 +7,74 @@ iv:main {
 :godbolt::main {
   ^ = ivm:x(0 ivm:eraser)
   ivm:graft[:root::ops::flex::Drop::ref::drop] = ivm:x(0 ivm:eraser)
+  ivm:graft[:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]] = ivm:x(ivm:n32#67 ivm:x(ivm:eraser 1))
+  ivm:graft[:root::util::erase::drop] = ivm:x(1 ivm:eraser)
   ivm:eraser = ivm:eraser
+}
+
+:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]] {
+  ^ = ivm:x(0 ivm:x(1 2))
+  ivm:graft[:root::Atomic::Await::n32::_await[vi:closure[:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]]]] = ivm:x(0 ivm:x(ivm:x(1 2) 3))
+  ivm:graft[:root::util::erase::drop] = ivm:x(3 ivm:eraser)
 }
 
 :root::ops::flex::Drop::ref::drop {
   ^ = ivm:x(ivm:x(0 0) ivm:eraser)
   ivm:eraser = ivm:eraser
+}
+
+:root::util::duplicate::fork {
+  ^ = ivm:x(ivm:x(ivm:y(0 1) 0) 1)
+}
+
+:root::util::erase::drop {
+  ^ = ivm:eraser
+}
+
+:root::numeric::N32::eq {
+  ^ = ivm:x(
+    ivm:x(0 1)
+    ivm:x(ivm:x(2 3) 4)
+  )
+  ivm:graft[:root::util::duplicate::fork] = ivm:x(
+    ivm:x(0 1)
+    ivm:ext:merge[vi:n32:eq](5 4)
+  )
+  ivm:graft[:root::util::duplicate::fork] = ivm:x(ivm:x(2 3) 5)
+}
+
+:root::Atomic::Await::n32::_await[vi:closure[:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]]] {
+  ^ = ivm:x(0 ivm:x(1 ivm:eraser))
+  ivm:graft[:root::util::erase::drop] = ivm:x(2 ivm:eraser)
+  ivm:graft[:root::numeric::N32::eq] = ivm:x(
+    ivm:x(0 3)
+    ivm:x(
+      ivm:x(ivm:n32 2)
+      ivm:ext:merge[ivm:branch](
+        ivm:branch[
+          :root::Atomic::Await::n32::_await#3[vi:closure[:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]]],
+          :root::Atomic::Await::n32::_await#2[vi:closure[:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]]],
+        ]
+        ivm:x(3 1)
+      )
+    )
+  )
+  ivm:eraser = ivm:eraser
+}
+
+:root::Atomic::Await::await#1[:root::Atomic::Await::n32, vi:closure[:godbolt::main]] {
+  ^ = ivm:x(
+    ivm:x(ivm:eraser iv:black_box(0))
+    ivm:x(0 ivm:eraser)
+  )
+}
+
+:root::Atomic::Await::n32::_await#2[vi:closure[:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]]] {
+  ^ = ivm:x(0 1)
+  ivm:graft[:root::Atomic::Await::await#1[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]] = ivm:x(1 ivm:x(0 ivm:eraser))
+}
+
+:root::Atomic::Await::n32::_await#3[vi:closure[:root::Atomic::Await::await[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]]] {
+  ^ = ivm:x(0 1)
+  ivm:graft[:root::Atomic::Await::await#1[:root::Atomic::Await::n32, vi:closure[:godbolt::main]]] = ivm:x(1 ivm:x(0 ivm:eraser))
 }

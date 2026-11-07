@@ -1,7 +1,14 @@
 // testbed for seeing what certain vine programs compile to what ivy
-use #root::Atomic;
+use #root::Atomic::Await;
 
-pub fn main(_: &IO) {}
+pub fn main(_: &IO) {
+  let x: N32 = 67;
+  Await::await(x, fn(x) { black_box(x) });
+  // let x = Atomic::new(&0);
+  //
+  // x.access((), fn((), &x: &N32) {});
+  // black_box(x);
+}
 
 // pub fn main(_: &IO) {
 //   let foo = Atomic::new[N32](&0);
