@@ -409,3 +409,96 @@ I forgot to mention how this ties into the `if value == 0 { f() } else { f() }` 
 - We want to only evaluate `f()` once `value` is ready - the `Atomic` internally does `context.await(..)`, so `value` is the `context` here.
 - Therefore, to establish this "wait-until" relationship, we must depend on *inspection* of the extrinsic value, which would require the IVM to resolve it to a real value.
 - In the case of `vi:n32`, we do this via a `vi:n32:eq` call.
+
+---
+
+I've been working on changing the atomics API from:
+```rs
+let x = Atomic::new(0);
+let y = x.access(some_calc, fn(some_calc, &x: &N32) {
+  x += some_calc;
+  x
+});
+io.println("{y}");
+```
+
+to
+```rs
+let x = Atomic::new(0);
+let y = do {
+  let x = x.access(&some_calc);
+  x += some_calc;
+  x
+};
+io.println("{y}");
+```
+
+which I believe is a more ergonomic solution. I've figured out how to solve it, and it's like stupidly simple lol.
+
+First I played around with changing the `Await` machinery from:
+```rs
+pub trait[T] Await {
+  fn _await[F; fn F(T)](value: T, f: F);
+}
+```
+
+to
+```rs
+pub trait[T] Await {
+  fn await(value: T) -> T;
+}
+```
+
+This still lets us do things like:
+```rs
+pub impl n32: Await[N32] {
+  fn await(value: N32) -> N32 {
+    if value == 0 {
+      value
+    } else {
+      value
+    }
+  }
+}
+```
+
+So we can express the "depends-on-observing-the-value" relationship here, but this *doesn't* let us combine this dependency with something else to express a "depends-on-two-things":
+
+```rs
+pub fn .access[T, C; Await[C]](&Atomic[T](&token), &ctx: &C) -> &T {
+  // awesome, we can await on `ctx`!
+  ctx = ctx.await();
+  // ..but this access doesn't depend on `ctx` at all. :(
+  // and we can't make it do so. :(
+  token.access()
+}
+```
+
+So instead, I reverted the `Await` machinery to how it already is, and instead looked at changing `.access`. The solution turned out to be stupidly simple.
+
+We went from the following:
+```rs
+pub fn .access[T, C, F, R; Await[C], fn F(C, &T) -> R](&Atomic[T](&token), ctx: C, f: F) -> R {
+  let output;
+  ctx.await(fn (ctx) { output = f(ctx, token.access()); })
+  output
+}
+```
+
+to:
+```rs
+pub fn .access[T, C; Await[C]](&Atomic[T](&token), &ctx: &C) -> &T {
+  let output;
+  let new_ctx;
+  ctx.await(fn (ctx) {
+    output = token.access();
+    new_ctx = ctx;
+  });
+  ctx = new_ctx;
+  output
+}
+```
+
+When we enter the `await` closure, we can just assign the `&T` we get to a variable *outside of that closure*, and then *return that assigned value*. That way, the caller can get the real `&T` out; the "depends-on-two-things" relationship is preserved; and the critical section is preserved, since the critical section only ends once the final value is put back into `output: &T`.
+
+My HTTP example seems to work the same with both the original API and my version of the API.
