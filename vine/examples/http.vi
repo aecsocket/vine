@@ -77,20 +77,14 @@ fn handle_stream(&io: &IO, num_visits: Atomic[N32], stream: TcpStream) -> Result
   }
 
   // mutate a shared global
-  let num_visits_now = num_visits.access((), fn ((), &num_visits: &N32) {
+  let num_visits_now = do {
+    let &num_visits = num_visits.access(&io);
     for _ in 0..1000 {
       num_visits += 1;
       io.sleep(1);
     }
     num_visits
-  });
-
-  // do {
-  //   let counter: AtomicGuard[N32] = counter.access(n);
-  //   io.println("{i}, {n}, {counter}");
-  //   counter += 1;
-  //   // `counter` dropped here, ending the atomic block
-  // }
+  };
 
   // do db ops unique to this task
   io.sleep(4000);

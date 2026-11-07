@@ -10,9 +10,9 @@ pub fn main(&io: &IO) {
     for _ in 0..rng.gen_n32() % 1000 {
       n += 1;
     }
-    counter.fork().access(n, fn (n: N32, &counter: &N32) {
-      io.println("{i}, {n}, {counter}");
-      counter += 1;
-    })
+
+    let &counter = counter.fork().access(&n);
+    io.println("[iter {i}] n = {n} | counter = {counter}");
+    counter += 1;
   }
 }

@@ -1,13 +1,42 @@
 // testbed for seeing what certain vine programs compile to what ivy
-use #root::Atomic::Await;
+use #root::Atomic;
 
-pub fn main(_: &IO) {
-  let x: N32 = 67;
-  Await::await(x, fn(x) { black_box(x) });
-  // let x = Atomic::new(&0);
-  //
-  // x.access((), fn((), &x: &N32) {});
-  // black_box(x);
+pub fn main(&io: &IO) {
+  let x = Atomic::new[N32](&0);
+  let ios = [];
+
+  for i in 0..10 {
+    let io2 = io.split();
+    do_stuff(&io2, i, x.fork());
+    ios.push_back(io2);
+  }
+
+  for io2 in ios { io.join(io2); }
+}
+
+fn do_stuff(&io: &IO, i: N32, x: Atomic[N32]) {
+  let &x = x.access(&io);
+  for _ in 0..10 {
+    x += 1;
+    io.sleep(100);
+  }
+  io.println("[{i}] x = {x}");
+}
+
+fn .split(&io: &IO) -> IO {
+  safe $ivy {
+    ${io} = vi:ext#1[vi:io:split](^ ${~io})
+  }
+}
+
+fn .join(&io: &IO, other: IO) {
+  safe $ivy {
+    ${io} = vi:ext#2[vi:io:merge](${other} ${~io})
+  }
+}
+
+fn .sleep(&io: &IO, millis: N32) {
+  safe $ivy { ${io} = vi:ext#2[root:io:sleep](${millis} ${~io}) }
 }
 
 // pub fn main(_: &IO) {

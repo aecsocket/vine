@@ -21,14 +21,20 @@ pub mod Atomic {
     atomic
   }
 
-  pub fn .access[T, C, F, R; Await[C], fn F(C, &T) -> R](&Atomic[T](&token), ctx: C, f: F) -> R {
+  pub fn .access[T, C; Await[C]](&Atomic[T](&token), &ctx: &C) -> &T {
     let output;
-    ctx.await(fn (ctx) { output = f(ctx, token.access()); })
+    let new_ctx;
+    ctx.await(fn (ctx) {
+      output = token.access();
+      new_ctx = ctx;
+    });
+    ctx = new_ctx;
     output
   }
 
   pub fn .read[T+](&self: &Atomic[T]) -> T {
-    self.access((), fn ((), &value) { value })
+    let &t = self.access(&());
+    t
   }
 }
 
