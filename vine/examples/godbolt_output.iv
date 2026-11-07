@@ -1,0 +1,16 @@
+
+iv:main {
+  ^ = ivm:x(0 1)
+  ivm:graft[:godbolt::main] = ivm:x(ivm:x(0 1) ivm:eraser)
+}
+
+:godbolt::main {
+  ^ = ivm:x(0 ivm:eraser)
+  ivm:graft[:root::ops::flex::Drop::ref::drop] = ivm:x(0 ivm:eraser)
+  ivm:eraser = ivm:eraser
+}
+
+:root::ops::flex::Drop::ref::drop {
+  ^ = ivm:x(ivm:x(0 0) ivm:eraser)
+  ivm:eraser = ivm:eraser
+}

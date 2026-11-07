@@ -58,6 +58,8 @@ pub enum VineCommand {
   Run(VineRunCommand),
   /// Compile a Vine program to Ivy
   Build(VineBuildCommand),
+  /// Rebuild a Vine program to Ivy whenever the input file changes
+  Watch(VineWatchCommand),
   Check(VineCheckCommand),
   /// Run tests in a Vine program
   Test(VineTestCommand),
@@ -81,6 +83,7 @@ impl VineCommand {
     match Self::parse() {
       VineCommand::Run(run) => run.execute(),
       VineCommand::Build(build) => build.execute(),
+      VineCommand::Watch(watch) => watch.execute(),
       VineCommand::Check(check) => check.execute(),
       VineCommand::Test(test) => test.execute(),
       VineCommand::Repl(repl) => repl.execute(),
@@ -96,7 +99,7 @@ impl VineCommand {
   }
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub struct LibArgs {
   #[arg(long = "lib")]
   libs: Vec<Source>,
@@ -128,7 +131,7 @@ pub struct CheckArgs {
   libs: LibArgs,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
   main: Source,
   #[command(flatten)]
@@ -188,7 +191,7 @@ fn root_source() -> Source {
   Source { name: Ident("root".into()), path }
 }
 
-#[derive(Debug, Default, Args)]
+#[derive(Debug, Clone, Default, Args)]
 pub struct Optimizations {
   #[arg(long)]
   no_opt: bool,
@@ -310,13 +313,13 @@ impl VineTestCommand {
   }
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub struct VineBuildCommand {
   #[command(flatten)]
   compile: CompileArgs,
   #[command(flatten)]
   optimizations: Optimizations,
-  #[arg(long)]
+  #[arg(short = 'o', long)]
   out: Option<PathBuf>,
   #[arg(long, default_value = "ivm")]
   target: BuildTarget,
@@ -332,7 +335,25 @@ pub enum BuildTarget {
 
 impl VineBuildCommand {
   pub fn execute(self) -> Result<()> {
-    let (ref mut table, mut nets, _) = self.compile.compile();
+    self.build(false)
+  }
+
+  fn build(self, watching: bool) -> Result<()> {
+    let mut compiler = self.compile.initialize();
+    let mut table = Table::default();
+    let mut nets = HashMap::default();
+    let result = compiler.compile(&mut table, &mut nets, ());
+    eprint_diags(&compiler);
+    if result.is_err() {
+      if watching {
+        if let Some(out) = self.out {
+          _print_diags(fs::File::create(out)?, &compiler)?;
+        }
+        return Ok(());
+      }
+      exit(1);
+    }
+    let table = &mut table;
     let target = match self.target {
       BuildTarget::None => Target::None,
       BuildTarget::Ivm => Target::Ivm,
@@ -352,6 +373,44 @@ impl VineBuildCommand {
       println!("{text}");
     }
     Ok(())
+  }
+}
+
+#[derive(Debug, Args)]
+pub struct VineWatchCommand {
+  #[command(flatten)]
+  build: VineBuildCommand,
+  #[arg(long, default_value = "50")]
+  debounce: u64,
+}
+
+impl VineWatchCommand {
+  pub fn execute(self) -> Result<()> {
+    anyhow::ensure!(self.build.out.is_some(), "watch requires an output file (-o <OUTPUT>)");
+    let input = std::path::absolute(&self.build.compile.main.path)?;
+    let parent = input.parent().unwrap();
+    let (send, recv) = mpsc::channel();
+    let mut watcher = RecommendedWatcher::new(send, Default::default())?;
+    watcher.watch(parent, RecursiveMode::NonRecursive)?;
+    let debounce = Duration::from_millis(self.debounce);
+    let changed = |event: notify::Result<notify::Event>| -> Result<bool> {
+      let event = event?;
+      Ok(
+        !matches!(event.kind, notify::EventKind::Access(_))
+          && event.paths.iter().any(|path| path == &input),
+      )
+    };
+    loop {
+      self.build.clone().build(true)?;
+      loop {
+        if changed(recv.recv()?)? {
+          break;
+        }
+      }
+      while let Ok(event) = recv.recv_timeout(debounce) {
+        changed(event)?;
+      }
+    }
   }
 }
 

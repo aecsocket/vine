@@ -1,0 +1,232 @@
+// testbed for seeing what certain vine programs compile to what ivy
+use #root::Atomic;
+
+pub fn main(_: &IO) {}
+
+// pub fn main(_: &IO) {
+//   let foo = Atomic::new[N32](&0);
+//   foo.access((), fn ((), &counter: &N32) {
+//     counter += 1;
+//   });
+// }
+
+/*
+iv:main {
+  ^ = ivm:x(0 1)
+  ivm:graft[:godbolt::main] = ivm:x(ivm:x(0 1) ivm:eraser)
+}
+
+:root::util::erase {
+  ^ = ivm:x(ivm:graft[:root::util::eraser] ivm:eraser)
+  ivm:eraser = ivm:eraser
+}
+
+:godbolt::main {
+  ^ = ivm:x(ivm:x(0 0) ivm:eraser)
+  ivm:graft[:root::util::erase::drop] = ivm:x(1 ivm:eraser)
+  ivm:graft[:root::Atomic::new] = ivm:x(ivm:x(ivm:n32 1) 2)
+  ivm:graft[:root::ops::flex::Drop::struct_::drop[vi:synthetic:Struct[:root::Atomic], :root::ops::flex::Drop::ref]] = ivm:x(2 ivm:eraser)
+  ivm:eraser = ivm:eraser
+}
+
+:root::ops::flex::Drop::ref::drop {
+  ^ = ivm:x(ivm:x(0 0) ivm:eraser)
+  ivm:eraser = ivm:eraser
+}
+
+:root::util::erase::drop {
+  ^ = ivm:x(0 ivm:eraser)
+  ivm:graft[:root::util::erase] = ivm:x(0 ivm:eraser)
+}
+
+:root::util::eraser {
+  ^ = ivm:eraser
+}
+
+:root::ops::flex::Drop::struct_::drop[vi:synthetic:Struct[:root::Atomic], :root::ops::flex::Drop::ref] {
+  ^ = ivm:x(0 ivm:eraser)
+  ivm:graft[:root::derive::Struct::cast_deconstruct::cast[vi:synthetic:Struct[:root::Atomic]]] = ivm:x(0 1)
+  ivm:graft[:root::ops::flex::Drop::ref::drop] = ivm:x(1 ivm:eraser)
+  ivm:eraser = ivm:eraser
+}
+
+:root::derive::Struct::cast_deconstruct::cast[vi:synthetic:Struct[:root::Atomic]] {
+  ^ = ivm:x(0 1)
+  ivm:graft[vi:synthetic[vi:synthetic:identity]] = ivm:x(0 1)
+}
+
+vi:synthetic[vi:synthetic:identity] {
+  ^ = ivm:x(0 0)
+}
+
+:root::Atomic::new {
+  ^ = ivm:x(
+    ivm:x(0 1)
+    ivm:x(2 3)
+  )
+  ivm:graft[:root::Atomic::Token::new] = ivm:x(0 2)
+  ivm:graft[:root::Atomic::Token::end] = ivm:x(3 1)
+}
+
+:root::Atomic::Token::new {
+  ^ = ivm:x(0 1)
+  ivm:nil = ivm:ext:split[ivm:atomic:new](1 0)
+}
+
+:root::Atomic::Token::end {
+  ^ = ivm:x(ivm:ext:split[ivm:atomic:end](0 ivm:eraser) 0)
+}
+*/
+
+// ========================================================================================
+
+// with `foo.acces(..)`:
+/*
+iv:main {
+  ^ = ivm:x(0 1)
+  ivm:graft[:godbolt::main] = ivm:x(ivm:x(0 1) ivm:eraser)
+}
+
+:godbolt::main {
+  ^ = ivm:x(0 ivm:eraser)
+  ivm:graft[:root::ops::flex::Drop::ref::drop] = ivm:x(0 ivm:eraser)
+  ivm:graft[:root::util::erase::drop] = ivm:x(1 ivm:eraser)
+  ivm:graft[:root::Atomic::new] = ivm:x(ivm:x(ivm:n32 1) 2)
+  ivm:graft[:root::Atomic::access[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]]] = ivm:x(
+    ivm:x(2 3)
+    ivm:x(ivm:eraser ivm:x(ivm:eraser 4))
+  )
+  ivm:graft[:root::util::erase::drop] = ivm:x(4 ivm:eraser)
+  ivm:graft[:root::ops::flex::Drop::struct_::drop[vi:synthetic:Struct[:root::Atomic], :root::ops::flex::Drop::ref]] = ivm:x(3 ivm:eraser)
+  ivm:eraser = ivm:eraser
+}
+
+:root::Atomic::access[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]] {
+  ^ = ivm:x(
+    ivm:x(
+      ivm:x(0 1)
+      ivm:x(2 1)
+    )
+    ivm:x(3 ivm:x(4 5))
+  )
+  ivm:graft[:root::Atomic::Await::await[:root::Atomic::Await::tuple_nil, vi:closure[:root::Atomic::access[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]]]]] = ivm:x(3 ivm:x(ivm:x(
+    ivm:x(0 2)
+    ivm:x(4 5)
+  ) 6))
+  ivm:graft[:root::util::erase::drop] = ivm:x(6 ivm:eraser)
+}
+
+:root::Atomic::Await::await[
+  :root::Atomic::Await::tuple_nil,
+  vi:closure[
+    :root::Atomic::access[
+      :root::Atomic::Await::tuple_nil,
+      vi:closure[:godbolt::main]
+    ]
+  ]
+] {
+  ^ = ivm:x(0 ivm:x(1 2))
+
+  ivm:graft[
+    :root::Atomic::Await::tuple_nil::_await[
+      vi:closure[
+        :root::Atomic::Await::await[
+          :root::Atomic::Await::tuple_nil,
+          vi:closure[:root::Atomic::access[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]]]
+        ]
+      ]
+    ] = ivm:x(0 ivm:x(ivm:x(1 2) 3))
+
+  ivm:graft[:root::util::erase::drop] = ivm:x(3 ivm:eraser)
+}
+
+:root::ops::flex::Drop::ref::drop {
+  ^ = ivm:x(ivm:x(0 0) ivm:eraser)
+}
+
+:root::util::erase::drop {
+  ^ = ivm:eraser
+}
+
+:root::numeric::N32::add {
+  ^ = ivm:x(
+    ivm:ext:merge[vi:n32:add](0 1)
+    ivm:x(0 1)
+  )
+}
+
+:root::ops::flex::Drop::struct_::drop[vi:synthetic:Struct[:root::Atomic], :root::ops::flex::Drop::ref] {
+  ^ = ivm:x(0 ivm:eraser)
+  ivm:graft[:root::derive::Struct::cast_deconstruct::cast[vi:synthetic:Struct[:root::Atomic]]] = ivm:x(0 1)
+  ivm:graft[:root::ops::flex::Drop::ref::drop] = ivm:x(1 ivm:eraser)
+  ivm:eraser = ivm:eraser
+}
+
+:root::derive::Struct::cast_deconstruct::cast[vi:synthetic:Struct[:root::Atomic]] {
+  ^ = ivm:x(0 1)
+  ivm:graft[vi:synthetic[vi:synthetic:identity]] = ivm:x(0 1)
+}
+
+vi:synthetic[vi:synthetic:identity] {
+  ^ = ivm:x(0 0)
+}
+
+:root::Atomic::new {
+  ^ = ivm:x(
+    ivm:x(0 1)
+    ivm:x(2 3)
+  )
+  ivm:graft[:root::Atomic::Token::new] = ivm:x(0 2)
+  ivm:graft[:root::Atomic::Token::end] = ivm:x(3 1)
+}
+
+:root::Atomic::Token::new {
+  ^ = ivm:x(0 1)
+  ivm:nil = ivm:ext:split[ivm:atomic:new](1 0)
+}
+
+:root::Atomic::Token::end {
+  ^ = ivm:x(ivm:ext:split[ivm:atomic:end](0 ivm:eraser) 0)
+}
+
+:root::Atomic::Token::access {
+  ^ = ivm:x(
+    ivm:x(ivm:ext:split[ivm:ref](0 ivm:ext:split[ivm:atomic:token:access](1 2)) 0)
+    ivm:x(2 1)
+  )
+  ivm:graft[:root::util::erase::drop] = ivm:x(ivm:eraser ivm:eraser)
+}
+
+:godbolt::main#1 {
+  ^ = ivm:x(ivm:eraser ivm:x(ivm:x(ivm:eraser ivm:x(0 1)) ivm:eraser))
+  ivm:graft[:root::numeric::N32::add] = ivm:x(0 ivm:x(ivm:n32#1 1))
+  ivm:eraser = ivm:eraser
+}
+
+:root::Atomic::access#1[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]] {
+  ^ = ivm:x(
+    ivm:x(
+      ivm:x(0 1)
+      ivm:x(2 3)
+    )
+    ivm:x(4 ivm:eraser)
+  )
+  ivm:graft[:root::Atomic::Token::access] = ivm:x(ivm:x(0 1) 5)
+  ivm:graft[:godbolt::main#1] = ivm:x(2 ivm:x(ivm:x(4 5) 3))
+  ivm:eraser = ivm:eraser
+}
+
+:root::Atomic::Await::tuple_nil::_await[vi:closure[:root::Atomic::Await::await[:root::Atomic::Await::tuple_nil, vi:closure[:root::Atomic::access[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]]]]]] {
+  ^ = ivm:x(ivm:eraser ivm:x(0 ivm:eraser))
+  ivm:graft[:root::Atomic::Await::await#1[:root::Atomic::Await::tuple_nil, vi:closure[:root::Atomic::access[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]]]]] = ivm:x(0 ivm:x(ivm:eraser ivm:eraser))
+}
+
+:root::Atomic::Await::await#1[:root::Atomic::Await::tuple_nil, vi:closure[:root::Atomic::access[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]]]] {
+  ^ = ivm:x(
+    ivm:x(0 1)
+    ivm:x(2 ivm:eraser)
+  )
+  ivm:graft[:root::Atomic::access#1[:root::Atomic::Await::tuple_nil, vi:closure[:godbolt::main]]] = ivm:x(0 ivm:x(2 1))
+  ivm:eraser = ivm:eraser
+}
+*/
