@@ -24,7 +24,7 @@ use crate::{
 };
 
 pub fn all<'ivm>() -> impl Register<Host<'ivm>> {
-  (fundamental(), arithmetic())
+  (super::atomic::atomic(), fundamental(), arithmetic())
 }
 
 pub fn fundamental<'ivm>() -> impl Register<Host<'ivm>> {
@@ -370,9 +370,9 @@ impl<'ivm> ExtOutput<'ivm, ()> for String {
     table: &mut Table,
   ) -> impl use<'ivm> + Live<'ivm> + Fn(&mut Runtime<'ivm, '_>, Self) -> ExtVal<'ivm> {
     let handle = <List<_> as ExtOutput<_>>::register(host, table);
-    // SAFETY: `handle` drains the `Chars` iterator synchronously before returning,
-    // and `str` is owned by this call, so the borrow never actually escapes past
-    // the local stack frame despite its forged `'ivm` lifetime.
+    // SAFETY: `handle` drains the `Chars` iterator synchronously before
+    // returning, and `str` is owned by this call, so the borrow never actually
+    // escapes past the local stack frame despite its forged `'ivm` lifetime.
     move |rt, str| unsafe { handle(rt, List(extend_lifetime(&str).chars())) }
   }
 }

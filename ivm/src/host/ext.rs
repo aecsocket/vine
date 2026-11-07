@@ -8,6 +8,7 @@ use alloc::borrow::Cow;
 use ivy::name::{NameId, Table};
 use vine_util::register::{Register, Registry};
 
+pub mod atomic;
 pub mod common;
 #[cfg(feature = "std")]
 pub mod platform;

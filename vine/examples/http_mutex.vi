@@ -1,0 +1,278 @@
+use #root::IO::File::Error;
+use #root::Ext;
+
+
+pub fn main(&io: &IO) {
+  match main_(&io) {
+    Ok(()) {}
+    Err(err) {
+      io.println("error: {err.show()}");
+    }
+  }
+}
+
+fn main_(&io: &IO) -> Result[(), Error] {
+  let listener = match TcpListener::open(&io, "127.0.0.1:6767") {
+    Ok(listener) { listener }
+    Err(err) {
+      return Err(err);
+    }
+  };
+
+  io.println("listener ready at http://127.0.0.1:6767");
+
+  let num_visits = MutexN32::new(0);
+  let ios = [];
+  while io.forever() {
+    io.println("awaiting connection");
+
+    let stream = match listener.accept(&io) {
+      Ok(stream) { stream }
+      Err(err) {
+        listener.close(&io);
+        for io2 in ios { io.join(io2); }
+        return Err(err);
+      }
+    };
+
+    let io2 = io.split();
+    match handle_stream(&io2, num_visits, stream) {
+      Ok(()) {}
+      Err(err) {
+        io2.println("error while processing stream: {err.show()}");
+      }
+    }
+    ios.push_back(io2);
+  }
+  listener.close(&io);
+
+  for io2 in ios { io.join(io2); }
+
+  Ok()
+}
+
+fn handle_stream(&io: &IO, num_visits: MutexN32, stream: TcpStream) -> Result[(), Error] {
+  let contents = "";
+
+  loop {
+    match stream.read_char(&io) {
+      Ok(Some(char)) {
+        contents!.push_back(char);
+        if contents.ends_with(&"\r\n\r\n") {
+          break;
+        }
+        continue;
+      }
+      Ok(None()) { break; }
+      Err(err) {
+        stream.close(&io);
+        return Err(err);
+      }
+    }
+  }
+
+  if !contents.starts_with(&"GET / HTTP/1.1\r\n") {
+    stream.close(&io);
+    return Ok(());
+  }
+
+  do {
+    let counter: AtomicGuard[N32] = counter.access(n);
+    io.println("{i}, {n}, {counter}");
+    counter += 1;
+    // `counter` dropped here, ending the atomic block
+  }
+
+  counter.fork().access(n, fn (n: N32, &counter: &N32) {
+    io.println("{i}, {n}, {counter}");
+    counter += 1;
+  })
+
+  // mutate a shared global
+  let num_visits = do {
+    let guard = num_visits.lock(&io);
+    for _ in 0..10 {
+      *guard.value() += 1;
+      io.sleep(1000 / 10);
+    }
+    let visits = *guard.value();
+    guard.unlock(&io);
+    visits
+  };
+
+  // do db ops unique to this task
+  io.sleep(4000);
+
+  let resp =
+"HTTP/1.1 200 OK\r
+Content-Type: text/html; charset=utf-8\r
+Connection: close\r
+\r
+<!DOCTYPE html>
+<html>
+<body>
+  <h1>hello! you are visitor number {num_visits}</h1>
+  <p>the number above *should* always be a mul of 10</p>
+</body>
+</html>"
+
+  match stream.write_string(&io, resp) {
+    Ok(()) {}
+    Err(err) {
+      stream.close(&io);
+      return Err(err);
+    }
+  }
+
+  stream.close(&io);
+  Ok()
+}
+
+fn .split(&io: &IO) -> IO {
+  safe $ivy {
+    ${io} = vi:ext#1[vi:io:split](^ ${~io})
+  }
+}
+
+fn .join(&io: &IO, other: IO) {
+  safe $ivy {
+    ${io} = vi:ext#2[vi:io:merge](${other} ${~io})
+  }
+}
+
+/// Blocks the executing worker for at least the given number of milliseconds.
+pub fn .sleep(&io: &IO, millis: N32) {
+  safe $ivy { ${io} = vi:ext#2[root:io:sleep](${millis} ${~io}) }
+}
+
+// AI generated slop to get ivm bindings to work
+
+/// A shared mutex containing an N32 (the host's registered `n32` specialization).
+pub type MutexN32;
+
+pub mod MutexN32 {
+  pub impl : Ext[MutexN32] = safe Ext::identity;
+
+  pub fn new(value: N32) -> MutexN32 {
+    safe $ivy { ${value} = vi:ext#1[root:io:mutex:n32:new](^) }
+  }
+
+  pub impl : Fork[MutexN32] {
+    fn fork(&self: &MutexN32) -> MutexN32 {
+      safe $ivy { ${self} = vi:ext#1[root:io:mutex:n32:fork](^ ${~self}) }
+    }
+  }
+
+  pub impl : Drop[MutexN32] {
+    fn drop(self: MutexN32) {
+      safe $ivy { ${self} = vi:ext#1[root:io:mutex:n32:drop] }
+    }
+  }
+
+  /// Blocks until acquired; the returned guard must be unlocked.
+  pub fn .lock(&self: &MutexN32, &io: &IO) -> MutexN32Guard {
+    let value: N32;
+    let guard: MutexN32GuardToken;
+    safe $ivy {
+      ${io} = vi:ext#2[root:io:mutex:n32:lock](${self} ${~value} ${~guard} ${~io} ${~self})
+    };
+    MutexN32Guard({ value, token: guard })
+  }
+}
+
+type MutexN32GuardToken;
+
+mod MutexN32GuardToken {
+  pub impl : Ext[MutexN32GuardToken] = safe Ext::identity;
+}
+
+/// Owns the checked-out value and lock token; cannot be dropped or forked.
+pub struct MutexN32Guard({ value: N32, token: MutexN32GuardToken });
+
+pub mod MutexN32Guard {
+  pub fn .value(&MutexN32Guard(state): &MutexN32Guard) -> &N32 {
+    &state.value
+  }
+
+  pub fn .unlock(MutexN32Guard({ value, token }): MutexN32Guard, &io: &IO) {
+    safe $ivy {
+      ${io} = vi:ext#3[root:io:mutex:n32:unlock](${token} ${value} ${~io})
+    }
+  }
+}
+
+pub type TcpListener;
+
+pub mod TcpListener {
+  pub impl : Show[TcpListener];
+  pub impl : Ext[TcpListener] = safe Ext::identity;
+
+  pub fn open(&io: &IO, addr: String) -> Result[TcpListener, Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_listener:open](${addr as Ext} ^ ${~io})
+    };
+    result as Result[TcpListener, Error]
+  }
+
+  pub fn .close(self: TcpListener, &io: &IO) {
+    safe $ivy { ${io} = vi:ext#2[root:io:tcp_listener:close](${self} ${~io}) }
+  }
+
+  /// Accepts one connection, keeping the listener open for further connections.
+  pub fn .accept(&self: &TcpListener, &io: &IO) -> Result[TcpStream, Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_listener:accept](${self} ^ ${~io} ${~self})
+    };
+    result as Result[TcpStream, Error]
+  }
+}
+
+pub type TcpStream;
+
+pub mod TcpStream {
+  pub impl : Show[TcpStream];
+  pub impl : Ext[TcpStream] = safe Ext::identity;
+
+  pub fn .close(self: TcpStream, &io: &IO) {
+    safe $ivy { ${io} = vi:ext#2[root:io:tcp_stream:close](${self} ${~io}) }
+  }
+
+  /// Reads one byte, returning None on EOF.
+  pub fn .read_byte(&self: &TcpStream, &io: &IO) -> Result[Option[N32], Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_stream:read_byte](${self} ^ ${~io} ${~self})
+    };
+    let byte = (result as Result[N32, Error]).try;
+    Ok(if byte == N32::maximum { None() } else { Some(byte) })
+  }
+
+  /// Reads one UTF-8 character, returning None on EOF.
+  pub fn .read_char(&self: &TcpStream, &io: &IO) -> Result[Option[Char], Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#2[root:io:tcp_stream:read_char](${self} ^ ${~io} ${~self})
+    };
+    let char = (result as Result[Char, Error]).try;
+    Ok(if char == N32::maximum as Char { None() } else { Some(char) })
+  }
+
+  pub fn .write_byte(&self: &TcpStream, &io: &IO, byte: N32) -> Result[(), Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#3[root:io:tcp_stream:write_byte](${self} ${byte} ^ ${~io} ${~self})
+    };
+    result as Result[(), Error]
+  }
+
+  pub fn .write_char(&self: &TcpStream, &io: &IO, char: Char) -> Result[(), Error] {
+    let result: Ext = safe $ivy {
+      ${io} = vi:ext#3[root:io:tcp_stream:write_char](${self} ${char} ^ ${~io} ${~self})
+    };
+    result as Result[(), Error]
+  }
+
+  pub fn .write_string(&self: &TcpStream, &io: &IO, string: String) -> Result[(), Error] {
+    for char in string {
+      self.write_char(&io, char).try;
+    }
+    Ok()
+  }
+}
