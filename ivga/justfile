@@ -1,0 +1,5 @@
+build:
+  swim plugin vivado
+
+program:
+  swim plugin program

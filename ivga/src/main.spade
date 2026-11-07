@@ -1,8 +1,11 @@
-// Export the full counter so simulation can check carry and wraparound cheaply.
 mod top;
 
 #[no_mangle]
-entity main(clk: clock, rst: bool) -> uint<28> {
-    reg(clk) count: uint<28> reset(rst: 0) = trunc(count + 1);
-    count
+entity main(clk: clock, rst: bool) -> bool {
+    reg(clk) count: uint<28> reset(rst: 0) = if count == 100_000_000 {
+        0
+    } else {
+        trunc(count + 1)
+    };
+    count > 50_000_000
 }

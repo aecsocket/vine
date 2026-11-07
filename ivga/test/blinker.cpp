@@ -11,7 +11,7 @@ int main(int argc, char** argv) {
     unsigned sync = 3;
     auto tick = [&](bool reset) {
         dut.clk = 0;
-        dut.reset = reset;
+        dut.reset = !reset;
         dut.eval();
         if (reset) sync = 3;
         count = (sync & 2) ? 0 : ((count + 1) & 0x0fffffff);
@@ -37,9 +37,9 @@ int main(int argc, char** argv) {
     dut.clk = 0;
     dut.eval();
     const auto before_reset = dut.led;
-    dut.reset = 1;
-    dut.eval();
     dut.reset = 0;
+    dut.eval();
+    dut.reset = 1;
     dut.eval();
     if (dut.led != before_reset) {
         std::cerr << "Counter reset asynchronously instead of synchronously\n";

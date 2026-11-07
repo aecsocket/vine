@@ -8,7 +8,17 @@ file delete -force ivga.bit
 read_verilog -sv [file join $root build spade.sv]
 
 read_xdc [file join $root board arty.xdc]
+# Digilent's Arty A7 manual lists XC7A100TCSG324-1 for the 100T board.
+# JTAG cannot distinguish its package/speed grade; verify the chip marking
+# if using a board revision fitted with a different part.
 synth_design -top top -part xc7a100tcsg324-1
+# Exempt only the marked synchronizer preset pins, not every reset-input path.
+set reset_cells [get_cells -hier -filter {RESET_SYNC == "TRUE"}]
+set reset_pins [get_pins -of_objects $reset_cells -filter {REF_PIN_NAME == PRE}]
+if {[llength $reset_cells] != 2 || [llength $reset_pins] != 2} {
+    error "Expected two reset synchronizer preset pins; refusing to apply timing exception"
+}
+set_false_path -from [get_ports reset] -to $reset_pins
 opt_design
 place_design
 route_design

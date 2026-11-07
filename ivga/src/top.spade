@@ -4,14 +4,15 @@
 extern entity FDPE<#uint INIT>(C: clock, CE: bool, D: bool, PRE: bool, Q: inv bool);
 
 #[no_mangle(all)]
-entity top(clk: clock, r#reset: bool, led: inv uint<4>) {
+entity top(clk: clock, r#reset: bool, led: inv [bool; 4]) {
+    // The dedicated chipKIT reset input on C2 is active low.
+    let reset_asserted = !r#reset;
     let (stage1, stage1_out) = port();
     let (stage2, stage2_out) = port();
-    #[verilog_attrs(ASYNC_REG = "TRUE")]
-    let _ = inst FDPE::<1>(clk, true, false, r#reset, stage1_out);
-    #[verilog_attrs(ASYNC_REG = "TRUE")]
-    let _ = inst FDPE::<1>(clk, true, stage1, r#reset, stage2_out);
+    #[verilog_attrs(ASYNC_REG = "TRUE", RESET_SYNC = "TRUE")]
+    let _ = inst FDPE::<1>(clk, true, false, reset_asserted, stage1_out);
+    #[verilog_attrs(ASYNC_REG = "TRUE", RESET_SYNC = "TRUE")]
+    let _ = inst FDPE::<1>(clk, true, stage1, reset_asserted, stage2_out);
 
-    let count = inst lib::main(clk, stage2);
-    set led = trunc(count >> 24);
+    set led = [inst lib::main(clk, stage2), false, false, false];
 }
