@@ -7,7 +7,17 @@ if {[file normalize [pwd]] ne [file join $root build]} {
 file delete -force ivga.bit
 # Non-project flow: load the installed XPM sources before synthesis.
 read_verilog -sv -library xpm [file join $::env(XILINX_VIVADO) data ip xpm xpm_memory hdl xpm_memory.sv]
-read_verilog -sv [file join $root src mem bram.sv]
+proc systemverilog_sources {directory} {
+    set sources [glob -nocomplain -types f -directory $directory *.sv]
+    foreach child [glob -nocomplain -types d -directory $directory *] {
+        lappend sources {*}[systemverilog_sources $child]
+    }
+    return [lsort $sources]
+}
+set shim_sources [systemverilog_sources [file join $root src]]
+if {[llength $shim_sources] > 0} {
+    read_verilog -sv $shim_sources
+}
 read_verilog -sv [file join $root build spade.sv]
 
 read_xdc [file join $root board arty.xdc]

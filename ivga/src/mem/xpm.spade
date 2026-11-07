@@ -1,0 +1,56 @@
+use std::mem::{WritePort, ReadPort};
+use std::conv::transmute;
+
+/// Xilinx-specific simple dual port BRAM module.
+///
+/// `std::mem::Memory` doesn't guarantee the semantics when reading and writing
+/// to the same address in the same clock cycle, so we need a wrapper which does
+/// so. Xilinx XPM's BRAM supports `.WRITE_MODE_B("read_first")`, which gives us
+/// the ordering we need.
+pub entity sdpram<#uint AddrSz, #uint DataSz, Data, #uint Depth>(
+    clk: clock,
+) -> (WritePort<AddrSz, Data>, ReadPort<AddrSz, Data>) {
+    // write
+    let write_addr = port::<uint<AddrSz>>();
+    let write_data = port::<Option<Data>>();
+
+    let write_enable = write_data.0.is_some();
+    let write_bits = match write_data.0 {
+        None => std::undef::undef(),
+        Some(data) => unsafe { transmute::<Data, uint<DataSz>>(data) },
+    };
+    let write = WritePort {
+        addr: write_addr.1,
+        write: write_data.1,
+    };
+
+    // read
+    let read_addr = port::<uint<AddrSz>>();
+    let read_bits = port::<uint<DataSz>>();
+    let read_data = unsafe { transmute::<uint<DataSz>, Data>(read_bits.0) };
+
+    let read = ReadPort {
+        addr: read_addr.1,
+        out: read_data,
+    };
+
+    inst xpm_sdpram::<DataSz, AddrSz, Depth>(
+        clk,
+        read_addr.0,
+        write_addr.0,
+        write_enable,
+        write_bits,
+        read_bits.1,
+    );
+    (write, read)
+}
+
+#[no_mangle(all)]
+extern entity xpm_sdpram<#uint DATA_SZ, #uint ADDR_SZ, #uint DEPTH>(
+    clk: clock,
+    read_addr: uint<ADDR_SZ>,
+    write_addr: uint<ADDR_SZ>,
+    write_enable: bool,
+    write_data: uint<DATA_SZ>,
+    read_data: inv uint<DATA_SZ>,
+);

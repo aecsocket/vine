@@ -1,5 +1,5 @@
 mod pages;
-pub mod bram;
+mod xpm;
 
 use std::mem::{WritePort, ReadPort};
 
@@ -27,8 +27,8 @@ pub struct Port {
 }
 
 pub entity heap(clk: clock) -> (HeapWrite, HeapRead) {
-    let (write_odd, read_odd) = inst std::mem::dp_bram::<16, Word, 65535>(clk, clk);
-    let (write_even, read_even) = inst std::mem::dp_bram::<16, Word, 65535>(clk, clk);
+    let (write_odd, read_odd) = inst xpm::sdpram::<16, 64, Word, 65535>(clk);
+    let (write_even, read_even) = inst xpm::sdpram::<16, 64, Word, 65535>(clk);
     (
         HeapWrite { even: write_even, odd: write_odd },
         HeapRead { even: read_even, odd: read_odd },

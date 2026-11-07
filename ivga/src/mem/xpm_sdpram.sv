@@ -1,33 +1,33 @@
 `timescale 1ns/1ps
 
 module xpm_sdpram #(
-    parameter integer WIDTH = 64,
-    parameter integer DEPTH = 65536,
-    parameter integer INDEX = (DEPTH > 1 ? $clog2(DEPTH) : 1)
+    parameter integer DATA_SZ,
+    parameter integer ADDR_SZ,
+    parameter integer DEPTH
 ) (
     input wire clk,
-    input wire [INDEX-1:0] read_addr,
-    input wire [INDEX-1:0] write_addr,
+    input wire [ADDR_SZ-1:0] read_addr,
+    input wire [ADDR_SZ-1:0] write_addr,
     input wire write_enable,
-    input wire [WIDTH-1:0] write_data,
-    output wire [WIDTH-1:0] read_data
+    input wire [DATA_SZ-1:0] write_data,
+    output wire [DATA_SZ-1:0] read_data
 );
     initial begin
-        if (WIDTH < 1 || DEPTH < 1 || INDEX < 1)
-            $fatal(1, "xpm_sdpram: WIDTH, DEPTH and INDEX must be positive");
-        if (INDEX < $clog2(DEPTH))
-            $fatal(1, "xpm_sdpram: INDEX cannot address DEPTH words");
+        if (DATA_SZ < 1 || DEPTH < 1 || ADDR_SZ < 1)
+            $fatal(1, "xpm_sdpram: DATA_SZ, DEPTH and ADDR_SZ must be positive");
+        if (ADDR_SZ < $clog2(DEPTH))
+            $fatal(1, "xpm_sdpram: ADDR_SZ cannot address DEPTH words");
     end
 
     xpm_memory_sdpram #(
-        .MEMORY_SIZE(WIDTH * DEPTH),
+        .MEMORY_SIZE(DATA_SZ * DEPTH),
         .MEMORY_PRIMITIVE("block"),
         .CLOCKING_MODE("common_clock"),
-        .WRITE_DATA_WIDTH_A(WIDTH),
-        .BYTE_WRITE_WIDTH_A(WIDTH),
-        .READ_DATA_WIDTH_B(WIDTH),
-        .ADDR_WIDTH_A(INDEX),
-        .ADDR_WIDTH_B(INDEX),
+        .WRITE_DATA_WIDTH_A(DATA_SZ),
+        .BYTE_WRITE_WIDTH_A(DATA_SZ),
+        .READ_DATA_WIDTH_B(DATA_SZ),
+        .ADDR_WIDTH_A(ADDR_SZ),
+        .ADDR_WIDTH_B(ADDR_SZ),
         .WRITE_MODE_B("read_first"),
         .READ_LATENCY_B(1),
         .USE_MEM_INIT(1),
