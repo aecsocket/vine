@@ -502,3 +502,97 @@ pub fn .access[T, C; Await[C]](&Atomic[T](&token), &ctx: &C) -> &T {
 When we enter the `await` closure, we can just assign the `&T` we get to a variable *outside of that closure*, and then *return that assigned value*. That way, the caller can get the real `&T` out; the "depends-on-two-things" relationship is preserved; and the critical section is preserved, since the critical section only ends once the final value is put back into `output: &T`.
 
 My HTTP example seems to work the same with both the original API and my version of the API.
+
+---
+
+Back to looking at hardware. Gotta be honest, I hate the state of HDLs right now. My initial prototype was SystemVerilog which was *okay* but has a bit too much footgun-y for my liking, and is just kinda clunky to use compared to modern langs and toolchains. Amaranth was *way* better to develop in, and I do like it a lot, but the lack of type safety and LSP support/type annotations makes it also not great to develop in. Also the `wiring.Signature` stuff doesn't sit super well with me, I feel like there's a better approach. I tried to implement my design in Spade today, and I can definitely see the appeal of it with its toolchain, build system and language. But honestly speaking, I found actually writing the logic *way* worse than even SV. There's no way to do a construct like:
+
+```
+some_signal <= init_value;
+if some_other_signal:
+  some_signal <= the_second_value;
+```
+
+And this "control flow but not really control flow" stuff gets *really* deep in the designs I'm writing - even the simple stuff like the page allocator, which is relatively simple. I like a lot of its other features - the typing, the `fn` and `map`s and stuff, it's good - but it's just genuinely impossible to write actual logic in it. At least the pipelining seems well thought-out.
+
+I have no clue what to do with HDLs here. Honestly I would get the most velocity from just Amaranth or SV directly. I have a little prototype `shitty-hdl` in the works, but I'm not sure if that will go anywhere, and I feel like I'll end up writing the wrong design.
+
+Anyways, away from HDLs and to the actual hardware. I had a thought about the page allocator: on any given clock cycle, there are 4 possible input states to it:
+1. no alloc request, no free request
+2. alloc request, no free request
+  - in this case, we prefer popping the free list, and bump allocate if empty, and signal OOM if, well, OOM
+3. no alloc request, free request
+  - set `free_head <= page`, and write the current `free_head` into `heap[page]`
+4. alloc request, free request
+  - we can just give the guy who requested alloc, the page of the guy who requested free, **and do zero real work!**
+
+So the cases 2, 3 require us to potentially stall on a DDR RAM read (maybe 10s? 100s? of cycles). Case 4 is just a nice optimization that I thought of. Also, we can fulfil the requests in case 4 even if we're still stalled on a memory read - case 4 requires no heap access, which is cool. So what we could do is have like: if we're stalled on a memory read, and a client wants to allocate, then we block that client; then if another client wants to come in and free, we can immediately unblock those two and free up the alloc and free client slots. This is like, a super micro optimization, but still good in theory I guess?
+
+I believe we can also apply the same trick to the pair allocator.
+
+Also, the page allocator works on pages of like, idk, 256 words. If we allocate a page from the free list, then we (might) have to call out to DDR RAM to fetch the next item in the free list we just popped off. But what if we cached parts of the free list in onboard BRAM? Like, there's only one page allocator on the whole design, so all the page-related reads/writes go through us anyway. What if we had like:
+- client wants to allocate a page
+- our free head says `0x6700` is the next base addr free (assume the low `0x00` is the offset in the page)
+- our cache says that `heap[0x6700] = 0x6900`, and `heap[0x6900] = 0x4200`
+- so we know that our free list is `0x6700 -> 0x6900 -> 0x4200 -> (free_count - 3 more entries...)`
+- this means that we don't even have to do a DRAM read - we can just `free_head = 0x6900` and give `0x6700` to the client
+- now obviously, this means that our free list is now `0x6900 -> 0x4200 -> (free_count - 2 more entries...)` - eventually we will run out of cached values
+- so whenever we're NOT doing any page allocs or frees, we can take some spare DDR cycles to refill our cache - find where `0x4200` points to (find `heap[0x4200]` from DDR)
+- if we try to allocate and we've ALREADY consumed our burst cache of free list entries, then yeah we HAVE to stall. but hey we were faster for a bit!
+
+I believe we can reuse the same design for the pair allocator as well. The page allocator and pair allocator seem very similar I guess?
+
+Ok so that's memory alloc, cool. I guess I'm not *too* worried about implementing this. Also, my FPGA has 256MiB of extra DRAM onboard, limited to a 16-bit bus. So I'm responsible for arbitrating requests for DRAM in my design. IIUC, if I expanded this later to like a DDR3 PHY then the design would be fundamentally the same, but just a different bus size and timing.
+
+So we know how we can cache heap and pair alloc; how can we cache other stuff like the next worklist items? Actually, this is a good time to pause and realise what I've just designed: this isn't a cache architecture where every part of the chip shares a cache, but *different parts of the design have their own caches*. This means that we don't need to arbitrate cache access!
+
+Anyway, back to worklist items. Well, we want to interact `Port(Tag.Graft, 0x12345, 0)` with `Port(Tag.ExtVal, 0d100, vi:n32)`. What states could we be in?
+- This is the first worklist item we have, and we have nothing cached; we're forced to stall on a memory access to `0x12345` from DRAM
+  - Could we optimize our cache access and like, fetch a cache line? No, this is unnecessary; we have no clue where our next port is gonna point to. And there is *zero* guarantee of memory locality (ok I guess maybe a little bit? But I don't believe a significant amount?), so there'd be no point in trying to fill a cache line, or even having the concept of a cache line.
+- Alternatively, we're already midway through running our program; we're already interacting some stuff, and we know that this interaction is *somewhere* in the worklist (maybe item 20 or something), but still a while away.
+  - In this case, we literally have the perfect info for a hardware prefetcher to work!
+  - Our prefetcher goes through the worklist, sees, "oh this is a `Graft` with payload `0x12345` - that means it will eventually access `heap[0x12345]`", and then it will fetch that data from memory into the interactor cache
+
+So as a worked example:
+```rs
+worklist: [
+  (
+    Port(Tag.ExtFn, addr: 0x12000, label: 0),
+    Port(Tag.ExtVal, val: 0d100, label: vi:n32),
+  ),
+  (
+    Port(Tag.Comb, addr: 0x67676, label: 0),
+    Port(Tag.Erase),
+  ),
+  (
+    Port(Tag.Comb, addr: 0x42000, label: 0),
+    Port(Tag.Wire, addr: 0x43000),
+  )
+]
+```
+
+- For the first pair, our prefetcher will try to get `0x12000` if it's not already in cache.
+- For the 2nd, it sees that `Comb >-< Erase`, so it actually *doesn't* need to fetch `0x67676`.
+- For the 3rd, it'll fetch `0x42000` from memory into cache, but what about `0x43000`? Well, that's a wire, so it should actually try to follow the wire to the end... ig I need to think about this more
+
+Wait, an observation: can we follow the wire `0x43000` before the other worklist items are done? Uh.. maybe? I mean, if `Wire(0x43000) -> heap[0x43000] = Wire(0x44000) -> heap[0x44000] = Wire(0x45000)`, then actually, we can resolve this *without any interaction*, and we can just replace the original cell with `Wire(0x45000)`. Ah but wait we'd need to free the intermediate wires, that's easier said than done. I mean, I guess we *can* do that? Since access to the pair allocator will be arb'd anyway. Yeah, so potentially we have a hardware cache prefetcher PLUS a hardware wire prelinker? Interesting!
+
+And we can also do the above in multiple cycles:
+- cycle 1
+  - worklist[3]: `(x, Wire(0x43000))`
+  - -> `heap[0x43000] = Wire(0x44000)`
+  - -> `worklist[3] <- (x, Wire(0x44000))`
+  - free word `0x43000`
+- cycle 2 (we're still resolving the current active pair, and have made no progress; stalled on ALU?)
+  - worklist[3]: `(x, Wire(0x44000))`
+  - -> `heap[0x44000] = Wire(0x45000)`
+  - -> `worklist[3] <- (x, Wire(0x45000))`
+  - free word `0x44000`
+- cycle 3 (still stalled...)
+  - worklist[3]: `(x, Wire(0x45000))`
+  - -> `heap[0x45000] = Port(...)`
+  - oh we've reached the end of this wire!
+  - -> `worklist[3] <- (x, Port(...))`
+  - free word `0x45000`
+
+I also have to think about multicore, but it's already 1:07 AM and I need to sleep.

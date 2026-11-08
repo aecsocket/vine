@@ -1,4 +1,10 @@
 name = "ivga"
 
+[simulation]
+simulator = "verilator"
+testbench_dir = "test/cocotb"
+python_deps = ["cocotb==1.9.2"]
+no_wave = true
+
 [plugins.vivado]
 path = "plugins/vivado"

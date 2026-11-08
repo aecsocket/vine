@@ -1,0 +1,8 @@
+pub fn saturating_inc<#uint N>(value: uint<N>) -> uint<N> {
+    let zero: uint<N> = 0;
+    if value == ~zero {
+        value
+    } else {
+        value +. 1
+    }
+}

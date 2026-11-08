@@ -1,20 +1,109 @@
+use lib::util::saturating_inc;
+use lib::mem::{Addr, Word, HeapWrite, HeapRead};
+
 pub struct PageId {
     // 1024 pages; 64 words per page; 512 bytes per page
     value: uint<10>,
 }
 
-// pub struct PageAlloc {
-//     in_alloc: inv bool,
-//     out_alloc_page: PageId,
-//     in_free: inv Option<PageId>,
-// }
-//
-// impl PageAlloc {
-//     pub fn alloc(self, alloc: bool) -> Option<PageId> {
-//
-//     }
-// }
-//
-// pub entity page_alloc(clk: clock) -> PageAlloc {
-//     reg(clk) empty: PageId reset(rst: PageId(0))
-// }
+impl PageId {
+    pub fn max() -> PageId {
+        PageId((1 << 10) - 1)
+    }
+
+    pub fn base_addr(self) -> Addr {
+        Addr(zext(self.value) << 6)
+    }
+
+    pub fn from_addr(addr: Addr) -> PageId {
+        PageId(trunc(addr.value >> 6))
+    }
+}
+
+pub struct PageAlloc {
+    in_alloc: inv bool,
+    out_alloc_page: PageId,
+    in_free: inv Option<PageId>,
+}
+
+pub pipeline(0) page_alloc(
+    clk: clock,
+    rst: bool,
+    wire heap_write: HeapWrite,
+    wire heap_read: HeapRead,
+) -> PageAlloc {
+    let wire in_alloc = port();
+    let wire out_alloc_page = port();
+    let wire in_free = port();
+    decl empty, free_count, free_head;
+
+    let next: Next = if in_alloc.0 {
+        match in_free.0 {
+            Some(page) => {
+                // trying to free `page` and allocate a new one at the same time;
+                // just give `page` to the new caller
+                Next {
+                    out_alloc_page: page,
+                    empty, free_count, free_head,
+                    heap_write_addr: undef(), heap_write_even: None, heap_write_odd: None,
+                    heap_read_addr: undef(),
+                }
+            },
+            None => {
+                // allocate a page
+                Next {
+                    out_alloc_page: undef(),
+                    empty, free_count, free_head,
+                    heap_write_addr: undef(), heap_write_even: None, heap_write_odd: None,
+                    heap_read_addr: undef(),
+                }
+            }
+        }
+    } else {
+        match in_free.0 {
+            Some(page) => {
+                // free `page`
+                Next {
+                    out_alloc_page: undef(),
+                    empty, free_count, free_head,
+                    heap_write_addr: undef(), heap_write_even: None, heap_write_odd: None,
+                    heap_read_addr: undef(),
+                }
+            },
+            None => {
+                // do nothing
+                Next {
+                    out_alloc_page: undef(),
+                    empty, free_count, free_head,
+                    heap_write_addr: undef(), heap_write_even: None, heap_write_odd: None,
+                    heap_read_addr: undef(),
+                }
+            }
+        }
+    };
+
+    reg(clk) empty: PageId reset(rst: PageId(0)) = next.empty;
+    reg(clk) free_count: PageId reset(rst: PageId(0)) = next.free_count;
+    // no explicit reset since presence is controlled by `free_count`
+    reg(clk) free_head: PageId = next.free_head;
+    set out_alloc_page.1 = next.out_alloc_page;
+    heap_write.write(next.heap_write_addr, next.heap_write_even, next.heap_write_odd);
+    heap_read.inst(1) read(clk, next.heap_read_addr);
+
+    PageAlloc {
+        in_alloc: in_alloc.1,
+        out_alloc_page: out_alloc_page.0,
+        in_free: in_free.1,
+    }
+}
+
+struct Next {
+    out_alloc_page: PageId,
+    empty: PageId,
+    free_count: PageId,
+    free_head: PageId,
+    heap_write_addr: Addr,
+    heap_write_even: Option<Word>,
+    heap_write_odd: Option<Word>,
+    heap_read_addr: Addr,
+}

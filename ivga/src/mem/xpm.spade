@@ -1,5 +1,6 @@
 use std::mem::{WritePort, ReadPort};
 use std::conv::transmute;
+use std::undef::undef;
 
 /// Xilinx-specific simple dual port BRAM module.
 ///
@@ -16,7 +17,7 @@ pub entity sdpram<#uint AddrSz, #uint DataSz, Data, #uint Depth>(
 
     let write_enable = write_data.0.is_some();
     let write_bits = match write_data.0 {
-        None => std::undef::undef(),
+        None => undef(),
         Some(data) => unsafe { transmute::<Data, uint<DataSz>>(data) },
     };
     let write = WritePort {

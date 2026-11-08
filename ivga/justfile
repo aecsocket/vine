@@ -6,3 +6,6 @@ build:
 
 program:
   swim plugin program
+
+test:
+  swim test
