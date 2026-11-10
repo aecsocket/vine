@@ -596,3 +596,50 @@ And we can also do the above in multiple cycles:
   - free word `0x45000`
 
 I also have to think about multicore, but it's already 1:07 AM and I need to sleep.
+
+## 10 Nov
+
+Man I've been busy. Okay, so, HDLs. The state of HDLs, what to do, huh? I'll tell you exactly what to do: _go watch Bryan Cantrill's talks_. I was watching his talk at Jane Street on software and hardware, and [at 1:08:14](https://youtu.be/v0JjG0Qfwi8?si=4LveD-2V6F00Gj64&t=4094), an audience member asks a question about what Oxide thinks about HDLs. And I suddenly turn to my other monitor, where I was watching it while doing some other work, and go WAIT. HOLY SHIT.
+
+I don't know how I didn't think about this before! Oxide does some _great_ engineering work, and _obviously_ they do hardware stuff, so they _must_ have done FPGA work at some point! And their stack is open-source! So I can just... see what toolchain and language they're using!
+
+Anyways, turns out they're using Bluespec SystemVerilog, which I had heard about but never looked too deeply into. I dunno why but I have this habit of hearing about things, going off to look at other things, then coming back to that thing I overlooked and realising, oh shit I literally _knew_ that this existed why didn't I look at it sooner.
+
+So! Cantrill literally talked about the state of HDLs! See slide 40:
+
+https://speakerdeck.com/bcantrill/software-co-design-the-coming-golden-age?slide=40
+
+Holy shit?????? From Codex:
+
+```
+• Oxide’s public explanation emphasizes stronger types, atomic rules, and reducing verification work. I
+  found a direct explanation in Bryan Cantrill’s slides, plus a later talk that adds an important
+  qualification.
+ 
+  1. Hardware/software Co-design: The Coming Golden Age — slides 40–42
+     This is the clearest source for the original enthusiasm. Cantrill highlights:
+      • Strong typing inspired by Haskell and formal specification.
+      • Working with atomic rules and interfaces instead of individual signals.
+      • Letting the compiler handle more module coordination, reducing verification effort.
+      • The compiler becoming open source in early 2020.
+ 
+     He quotes Oxide engineer Arjen Roodselaar: “Bluespec is to SystemVerilog what Rust is to assembly.”
+     That captures their motivation, though the compiler doesn’t prove an entire design correct.
+ 
+  2. Cobalt repository
+     This shows the practical implementation: Bluespec interfaces and modules used for Oxide’s custom
+     logic, with development-board examples using an entirely open source synthesis toolchain. It
+     documents usage rather than a detailed language-selection process.
+ 
+  3. Andreessen’s Folly — Jane Street talk, Q&A around 1:08:34
+     This qualifies the earlier enthusiasm. Cantrill says he still loves Bluespec, but it lacked the
+     support/capability they needed for their high-speed work. He doesn’t explain precisely whether that
+     meant compiler performance, ecosystem, integration, staffing, or some combination—so I wouldn’t
+     interpret it as proof that BSV inherently produces slow hardware.
+```
+
+Yeah and it literally mentions the talk lol. Interesting qualification on the BSV statement -- that it can't do high-speed work. Watching the talk, I assume it means like touching super fast DDR, PCIe interfaces; maybe it just generates bad Verilog for that? Since Cantrill talked about high speed DDR interfaces, NICs, etc. in the talk. I don't know. But, regardless, this is enough motivation to get me to drop my shitty HDL project and to try out BSV.
+
+Now... the bad part is that there doesn't seem to be a great toolchain? There's `bsc` but it's _so_ much more annoying to get something just working than Amaranth. I have to give Amaranth credit for their build system and toolchain it's just so good. Well, nothing that some Rust can't solve later. In particular, I don't like writing `.xdc`s, I wish the toolchain could just figure it out for my board specifically. Also how's the BSV LSP story? Idk but Zed doesn't seem great for it right now.
+
+This also makes me kinda sad that my shitty HDL project was basically useless (since it was basically just a translation of Amaranth to Rust), but that's how it goes. I'd like to use good tools :)
