@@ -11,3 +11,5 @@ vivado.*
 
 # Machine-specific Slang library paths
 /.slang/
+
+references/

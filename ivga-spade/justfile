@@ -1,0 +1,11 @@
+default:
+  @just --list
+
+build:
+  swim plugin vivado
+
+program:
+  swim plugin program
+
+test:
+  swim test

@@ -2,10 +2,16 @@ default:
   @just --list
 
 build:
-  swim plugin vivado
+  mkdir -p target/
+  bsc -u -sim -g mkTop \
+    -bdir "target/" \
+    -simdir "target/" \
+    src/Top.bsv
 
-program:
-  swim plugin program
+  bsc -sim -e mkTop \
+    -bdir "target/" \
+    -simdir "target/" \
+    -o "target/top"
 
-test:
-  swim test
+sim: build
+  target/top
