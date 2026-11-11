@@ -1,6 +1,7 @@
 target := "target"
 top := "src/Top.bsv"
 bsc_lib := `printf 'puts $env(BLUESPECDIR)\n' | bluetcl`
+bsc := "bsc -p +:src:src/mem"
 
 default:
   @just --list
@@ -9,12 +10,12 @@ sim:
   mkdir -p "{{target}}/bsc"
   mkdir -p "{{target}}/sim"
 
-  bsc -u -sim -g mkTop \
+  {{bsc}} -u -sim -g mkTop \
     -bdir "{{target}}/bsc/" \
     -simdir "{{target}}/sim/" \
     "{{top}}"
 
-  bsc -sim -e mkTop \
+  {{bsc}} -sim -e mkTop \
     -bdir "{{target}}/bsc/" \
     -simdir "{{target}}/sim/" \
     -o "{{target}}/top"
@@ -25,7 +26,7 @@ emit-verilog:
   mkdir -p "{{target}}/bsc/"
   mkdir -p "{{target}}/verilog/"
 
-  bsc -u -verilog -g mkTop \
+  {{bsc}} -u -verilog -g mkTop \
     -bdir "{{target}}/bsc/" \
     -vdir "{{target}}/verilog/" \
     "{{top}}"

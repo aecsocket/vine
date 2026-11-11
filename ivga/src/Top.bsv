@@ -11,7 +11,7 @@ module mkTop(Leds);
     Reg#(Bool) led_on <- mkReg(False);
 
     rule tick;
-        if (count == 100_000_000 - 1) begin
+        if (count == 50_000_000 - 1) begin
             count <= 0;
             led_on <= !led_on;
             $display("LED is now %b", pack(!led_on));
