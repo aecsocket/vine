@@ -3,6 +3,8 @@ package Top;
 import BRAM::*;
 import DefaultValue::*;
 import GetPut::*;
+import Heap::*;
+import PageAlloc::*;
 
 interface Leds;
     (* always_ready, result = "led0" *)
@@ -11,6 +13,9 @@ endinterface
 
 (* synthesize *)
 module mkTop(Leds);
+    Heap heap <- mkHeap;
+    PageAlloc pages <- mkPageAlloc(heap);
+
     Reg#(Bit#(4)) count <- mkReg(0);
     Reg#(Bool) led_on <- mkReg(False);
 

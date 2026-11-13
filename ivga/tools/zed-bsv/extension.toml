@@ -1,0 +1,18 @@
+id = "bluespec-systemverilog"
+name = "Bluespec SystemVerilog"
+description = "Bluespec SystemVerilog highlighting and Blues language server support"
+version = "0.1.0"
+schema_version = 1
+authors = ["sandytruant etonsun2212@icloud.com"]
+repository = "https://github.com/sandytruant/zed-bsv"
+
+[grammars.bsv]
+repository = "https://github.com/sandytruant/tree-sitter-bsv"
+rev = "471a69b7b640aafedcc37a0053273504c4a9a36d"
+
+[language_servers.blues]
+name = "Blues"
+languages = ["Bluespec SystemVerilog"]
+
+[language_servers.blues.language_ids]
+"Bluespec SystemVerilog" = "bsv"

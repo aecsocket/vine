@@ -1,3 +1,4 @@
+/*
 package Xpm;
 
 interface SdpramCore#(type addr, type data);
@@ -8,7 +9,7 @@ interface SdpramCore#(type addr, type data);
 endinterface
 
 import "BVI" xpm_sdpram =
-module mkXpmSdpramCore#(Integer depth)(SdpramCore#(addr, data))
+module mkSdpramCore#(Integer depth)(SdpramCore#(addr, data))
     provisos (
         Bits#(addr, addrWidth),
         Bits#(data, dataWidth)
@@ -34,4 +35,19 @@ module mkXpmSdpramCore#(Integer depth)(SdpramCore#(addr, data))
     schedule readData CF (read, write, readData);
 endmodule
 
+interface SdpramServer#(type addr, type data);
+    // TODO
+endinterface
+
+module mkSdpramServer#(Integer depth)(SdpramServer#(addr, data))
+    provisos (
+        Bits#(addr, addrWidth),
+        Bits#(data, dataWidth)
+    );
+
+    // TODO
+
+endmodule
+
 endpackage
+*/

@@ -1,0 +1,19 @@
+[
+  {
+    "directory": "ivga",
+    "arguments": [
+      "/var/home/boris/.local/opt/bsc-2026.07.1/bin/bsc",
+      "-u",
+      "-verilog",
+      "-g",
+      "mkTop",
+      "-p",
+      "+:src:src/mem",
+      "-bdir",
+      "target/bsc",
+      "-vdir",
+      "target/verilog",
+      "src/Top.bsv"
+    ]
+  }
+]

@@ -599,7 +599,7 @@ I also have to think about multicore, but it's already 1:07 AM and I need to sle
 
 ## 10 Nov
 
-Man I've been busy. Okay, so, HDLs. The state of HDLs, what to do, huh? I'll tell you exactly what to do: _go watch Bryan Cantrill's talks_. I was watching his talk at Jane Street on software and hardware, and [at 1:08:14](https://youtu.be/v0JjG0Qfwi8?si=4LveD-2V6F00Gj64&t=4094), an audience member asks a question about what Oxide thinks about HDLs. And I suddenly turn to my other monitor, where I was watching it while doing some other work, and go WAIT. HOLY SHIT.
+Man I've been busy. Okay, so, HDLs. The state of HDLs, what to do, huh? I'll tell you exactly what to do: _go watch Bryan Cantrill's talks_. I was watching his talk at Jane Street on software and hardware, and [at 1:08:14](https://youtu.be/v0JjG0Qfwi8&t=4094), an audience member asks a question about what Oxide thinks about HDLs. And I suddenly turn to my other monitor, where I was watching it while doing some other work, and go WAIT. HOLY SHIT.
 
 I don't know how I didn't think about this before! Oxide does some _great_ engineering work, and _obviously_ they do hardware stuff, so they _must_ have done FPGA work at some point! And their stack is open-source! So I can just... see what toolchain and language they're using!
 
