@@ -1,6 +1,6 @@
 package Xpm;
 
-interface XpmSdpram#(type addr, type data);
+interface SdpramCore#(type addr, type data);
     method Action read(addr address);
     method data readData;
 
@@ -8,7 +8,7 @@ interface XpmSdpram#(type addr, type data);
 endinterface
 
 import "BVI" xpm_sdpram =
-module mkXpmSdpram#(Integer depth)(XpmSdpram#(addr, data))
+module mkXpmSdpramCore#(Integer depth)(SdpramCore#(addr, data))
     provisos (
         Bits#(addr, addrWidth),
         Bits#(data, dataWidth)
