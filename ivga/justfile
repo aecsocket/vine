@@ -1,7 +1,7 @@
 target := "target"
 top := "src/Top.bsv"
 bsc_lib := `printf 'puts $env(BLUESPECDIR)\n' | bluetcl`
-bsc := "bsc -p +:src:src/mem"
+bsc := "bsc -promote-warnings ALL -p +:src:src/mem"
 
 default:
   @just --list

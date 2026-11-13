@@ -1,8 +1,5 @@
 package Top;
 
-import BRAM::*;
-import DefaultValue::*;
-import GetPut::*;
 import Heap::*;
 import PageAlloc::*;
 
@@ -15,42 +12,30 @@ endinterface
 module mkTop(Leds);
     Heap heap <- mkHeap;
     PageAlloc pages <- mkPageAlloc(heap);
+    Reg#(Bool) ledOn <- mkReg(False);
+    Reg#(Bit#(2)) state <- mkReg(0);
+    Reg#(PageId) lastPage <- mkReg(pageId(0));
 
-    Reg#(Bit#(4)) count <- mkReg(0);
-    Reg#(Bool) led_on <- mkReg(False);
-
-    BRAM_Configure cfg = defaultValue;
-    cfg.memorySize = 16;
-    BRAM1Port#(Bit#(4), Bit#(64)) ram <- mkBRAM1Server(cfg);
-
-    Reg#(Bit#(1)) phase <- mkReg(0);
-
-    rule phase0 (phase == 0);
-        ram.portA.request.put(BRAMRequest {
-            write: False,
-            responseOnWrite: False,
-            address: count,
-            datain: 0
-        });
-        phase <= 1;
+    rule tick0 (state == 0);
+        pages.alloc;
+        state <= 1;
     endrule
-
-    rule phase1 (phase == 1);
-        let value <- ram.portA.response.get;
-        $display("mem[%h] = %h", count, value);
-
-        ram.portA.request.put(BRAMRequest {
-            write: True,
-            responseOnWrite: False,
-            address: count,
-            datain: value + 1
-        });
-        count <= count + 1;
-        phase <= 0;
+    rule tick1 (state == 1);
+        let page <- pages.allocPage;
+        lastPage <= page;
+        $display("page alloc'd = %h", page);
+        state <= 2;
+    endrule
+    rule tick2 (state == 2);
+        pages.free(lastPage);
+        state <= 3;
+    endrule
+    rule tick3 (state == 3);
+        state <= 0;
     endrule
 
     method Bool led0;
-        return led_on;
+        return ledOn;
     endmethod
 endmodule
 
